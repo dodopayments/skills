@@ -51,6 +51,7 @@ Skills are automatically available when configured in your OpenCode settings.
 | [usage-based-billing](./dodo-payments/usage-based-billing/) | Implementing metered billing with events and meters |
 | [billing-sdk](./dodo-payments/billing-sdk/) | Using BillingSDK React components |
 | [license-keys](./dodo-payments/license-keys/) | Managing license keys for digital products |
+| [credit-based-billing](./dodo-payments/credit-based-billing/) | Implementing credit entitlements, balances, and metered credit deduction |
 
 ## What are Skills?
 

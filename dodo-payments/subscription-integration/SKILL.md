@@ -323,6 +323,64 @@ const charge = await client.subscriptions.charge({
 
 ---
 
+## Subscriptions with Credit Entitlements
+
+Attach credit entitlements to subscription products to grant credits each billing cycle:
+
+### Setup
+
+1. Create a credit entitlement (Dashboard → Products → Credits)
+2. Create/edit a subscription product
+3. In **Entitlements** section, click **Attach** next to Credits
+4. Configure: credits per cycle, trial credits, proration, low balance threshold
+
+### Checkout with Credits
+
+```typescript
+// Product has credit entitlement attached (e.g., 10,000 AI tokens/month)
+const session = await client.checkoutSessions.create({
+  product_cart: [
+    { product_id: 'prod_pro_with_credits', quantity: 1 }
+  ],
+  subscription_data: {
+    trial_period_days: 14, // Trial credits can differ from regular amount
+  },
+  customer: { email: 'user@example.com' },
+  return_url: 'https://yoursite.com/success',
+});
+```
+
+### Credit Lifecycle per Cycle
+
+Each billing cycle:
+1. **New credits issued** — `credit.added` webhook fires
+2. **Usage deducts credits** — Automatically via meters or manually via API
+3. **Cycle ends** — Unused credits expire or roll over based on settings
+4. **Overage handled** — Forgiven, billed, or carried as deficit
+
+### Handle Credit Webhooks in Subscription Context
+
+```typescript
+case 'credit.added':
+  // Credits issued with subscription renewal
+  await syncCreditBalance(data.customer_id, data.credit_entitlement_id, data.balance_after);
+  break;
+case 'credit.balance_low':
+  // Notify customer or suggest upgrade
+  await sendLowBalanceAlert(data.customer_id, data.credit_entitlement_name, data.available_balance);
+  break;
+case 'credit.deducted':
+  // Track consumption for analytics
+  await logCreditUsage(data.customer_id, data.amount);
+  break;
+```
+
+### Plan Changes with Credits
+
+When customers upgrade/downgrade, credit proration can be enabled:
+- **Proration enabled**: Remaining credits are prorated based on time left in cycle
+- **Proration disabled**: Credits continue as-is until next cycle
+
 ## Plan Changes
 
 ### Upgrade/Downgrade Flow
@@ -509,3 +567,5 @@ Use test mode and trigger events manually from the webhook settings.
 - [On-Demand Subscriptions](https://docs.dodopayments.com/developer-resources/ondemand-subscriptions)
 - [Webhook Events](https://docs.dodopayments.com/developer-resources/webhooks/intents/subscription)
 - [Customer Portal](https://docs.dodopayments.com/developer-resources/customer-portal)
+- [Credit-Based Billing](https://docs.dodopayments.com/features/credit-based-billing)
+- [Credit Webhook Events](https://docs.dodopayments.com/developer-resources/webhooks/intents/credit)

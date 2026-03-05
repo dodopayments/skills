@@ -56,6 +56,17 @@ DODO_PAYMENTS_WEBHOOK_SECRET=your_webhook_secret_here
 | `dispute.opened` | New dispute received |
 | `license_key.created` | License key generated |
 
+### Credit Events
+| Event | Description |
+|-------|-------------|
+| `credit.added` | Credits granted to a customer (subscription, one-time, or API) |
+| `credit.deducted` | Credits consumed through usage or manual debit |
+| `credit.expired` | Unused credits expired after configured period |
+| `credit.rolled_over` | Unused credits carried forward at cycle end |
+| `credit.rollover_forfeited` | Credits forfeited at max rollover count |
+| `credit.overage_charged` | Overage charges applied beyond zero balance |
+| `credit.manual_adjustment` | Manual credit/debit adjustment via dashboard or API |
+| `credit.balance_low` | Credit balance dropped below configured threshold |
 ---
 
 ## Webhook Payload Structure
@@ -161,6 +172,15 @@ export async function POST(req: NextRequest) {
     case 'license_key.created':
       await handleLicenseKeyCreated(event.data);
       break;
+    case 'credit.added':
+      await handleCreditAdded(event.data);
+      break;
+    case 'credit.deducted':
+      await handleCreditDeducted(event.data);
+      break;
+    case 'credit.balance_low':
+      await handleCreditBalanceLow(event.data);
+      break;
     default:
       console.log(`Unhandled event type: ${event.type}`);
   }
@@ -225,6 +245,30 @@ async function handleLicenseKeyCreated(data: any) {
   // Store license key
   // Send to customer
   console.log(`License key created: ${key.substring(0, 8)}...`);
+}
+
+async function handleCreditAdded(data: any) {
+  const { customer_id, credit_entitlement_id, amount, balance_after } = data;
+  
+  // Update internal credit balance
+  // Log credit grant
+  console.log(`${amount} credits added for customer ${customer_id}, balance: ${balance_after}`);
+}
+
+async function handleCreditDeducted(data: any) {
+  const { customer_id, credit_entitlement_id, amount, balance_after } = data;
+  
+  // Update internal credit balance
+  // Check if balance is getting low
+  console.log(`${amount} credits deducted for customer ${customer_id}, balance: ${balance_after}`);
+}
+
+async function handleCreditBalanceLow(data: any) {
+  const { customer_id, credit_entitlement_name, available_balance, threshold_percent } = data;
+  
+  // Notify customer about low balance
+  // Suggest upgrading plan or purchasing more credits
+  console.log(`Low balance alert: ${available_balance} ${credit_entitlement_name} remaining for ${customer_id}`);
 }
 ```
 
@@ -482,3 +526,4 @@ You can trigger test webhooks from the Dodo Payments dashboard:
 - [Webhook Documentation](https://docs.dodopayments.com/developer-resources/webhooks)
 - [Event Reference](https://docs.dodopayments.com/developer-resources/webhooks/intents/webhook-events-guide)
 - [Standard Webhooks Spec](https://standardwebhooks.com/)
+- [Credit Webhook Events](https://docs.dodopayments.com/developer-resources/webhooks/intents/credit)

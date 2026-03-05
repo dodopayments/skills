@@ -531,6 +531,42 @@ Product: AI Platform
 └── Meter: Storage ($0.10/GB)
 ```
 
+### Credit-Based Meter Billing
+
+Link meters to credit entitlements so usage events deduct from a customer's credit balance instead of charging per-unit:
+
+1. Create a credit entitlement (Dashboard → Products → Credits)
+2. Create a usage-based product with a meter
+3. On the meter, toggle **Bill usage in Credits**
+4. Select the credit entitlement and set **Meter units per credit**
+
+```typescript
+// Meter: AI Tokens (Sum aggregation over "tokens")
+// Credit: "AI Credits" with 10,000 credits/cycle
+// Meter units per credit: 1000 (1,000 tokens = 1 credit)
+
+// Usage events deduct credits automatically
+await client.usageEvents.ingest({
+  events: [{
+    event_id: `ai_${Date.now()}_${crypto.randomUUID()}`,
+    customer_id: 'cus_abc123',
+    event_name: 'ai.tokens',
+    timestamp: new Date().toISOString(),
+    metadata: { tokens: '1500', model: 'gpt-4' }
+  }]
+});
+
+// Check remaining credit balance
+const balance = await client.creditEntitlements.balances.get(
+  'cent_ai_credits',
+  'cus_abc123'
+);
+console.log(`Credits remaining: ${balance.available_balance}`);
+```
+
+Credit deduction runs via a background worker every minute using FIFO ordering (oldest grants consumed first). When credits run out:
+- **Overage disabled**: Usage is blocked
+- **Overage enabled**: Usage continues and overage is tracked per your configured behavior (forgive, bill, or carry deficit)
 ---
 
 ## Best Practices
@@ -641,3 +677,4 @@ Customer generates 100 images:
 - [Event Ingestion](https://docs.dodopayments.com/features/usage-based-billing/event-ingestion)
 - [AI Chat App Tutorial](https://docs.dodopayments.com/developer-resources/build-an-ai-chat-app-with-usage-based-billing)
 - [Hybrid Billing Models](https://docs.dodopayments.com/features/hybrid-billing)
+- [Credit-Based Billing](https://docs.dodopayments.com/features/credit-based-billing)

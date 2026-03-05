@@ -92,7 +92,14 @@ $client = new Client(bearerToken: getenv('DODO_PAYMENTS_API_KEY'));
 Products are the items you sell. Create them in the dashboard or via API:
 - **One-time**: Single purchase products
 - **Subscription**: Recurring billing products
+- **Usage-based**: Metered billing per consumption
 
+### Credit Entitlements
+Credits are virtual balances (API calls, tokens, compute hours) attached to products. Create them in Dashboard → Products → Credits:
+- **Custom Unit**: Your own metric with configurable precision
+- **Fiat Credits**: Real currency value (USD, EUR, etc.)
+- Attach up to 3 credits per product
+- Configure rollover, overage, and expiration per entitlement
 ### Checkout Sessions
 The primary way to collect payments. Create a checkout session and redirect customers:
 
@@ -120,7 +127,9 @@ Listen to events for real-time updates:
 - `refund.succeeded` - Refund processed
 - `dispute.opened` - Dispute received
 - `license_key.created` - License key generated
-
+- `credit.added` - Credits granted to customer
+- `credit.deducted` - Credits consumed
+- `credit.balance_low` - Credit balance below threshold
 ---
 
 ## Common Integration Patterns
@@ -303,3 +312,4 @@ app.post('/create-checkout', async (req, res) => {
 - [SDK Repositories](https://github.com/dodopayments)
 - [Discord Community](https://discord.gg/bYqAp4ayYh)
 - [Support](mailto:support@dodopayments.com)
+- [Credit-Based Billing](https://docs.dodopayments.com/features/credit-based-billing)
