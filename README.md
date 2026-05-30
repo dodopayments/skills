@@ -15,9 +15,9 @@ npx skills add dodopayments/skills
 Or install individual skills:
 
 ```bash
-npx skills add dodopayments/skills/dodo-best-practices
-npx skills add dodopayments/skills/webhook-integration
-npx skills add dodopayments/skills/subscription-integration
+npx skills add dodopayments/skills/dodo-payments/best-practices
+npx skills add dodopayments/skills/dodo-payments/webhook-integration
+npx skills add dodopayments/skills/dodo-payments/subscription-integration
 ```
 
 ### Claude Code
