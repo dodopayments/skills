@@ -1,0 +1,85 @@
+{
+  "name": "dodopayments-skills",
+  "owner": {
+    "name": "Dodo Payments",
+    "url": "https://dodopayments.com"
+  },
+  "metadata": {
+    "description": "Official Agent Skills for Dodo Payments — payments, subscriptions, billing, webhooks, and more.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "dodo-best-practices",
+      "description": "Comprehensive guide for integrating Dodo Payments — the all-in-one payment and billing platform for SaaS and AI products.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/best-practices"
+      ]
+    },
+    {
+      "name": "billing-sdk",
+      "description": "Guide for using BillingSDK — open-source React components for pricing tables, subscription management, and billing UI with Dodo Payments.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/billing-sdk"
+      ]
+    },
+    {
+      "name": "checkout-integration",
+      "description": "Guide for creating checkout sessions and payment flows with Dodo Payments — one-time, subscriptions, and overlay checkout.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/checkout-integration"
+      ]
+    },
+    {
+      "name": "credit-based-billing",
+      "description": "Guide for implementing credit-based billing with Dodo Payments — credit entitlements, balances, ledger management, rollover, overage, and meter-based deduction.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/credit-based-billing"
+      ]
+    },
+    {
+      "name": "license-keys",
+      "description": "Guide for implementing license key management with Dodo Payments — activation, validation, and access control for software products.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/license-keys"
+      ]
+    },
+    {
+      "name": "subscription-integration",
+      "description": "Guide for implementing subscription billing with Dodo Payments — trials, upgrades, downgrades, and on-demand billing.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/subscription-integration"
+      ]
+    },
+    {
+      "name": "usage-based-billing",
+      "description": "Guide for implementing usage-based billing with Dodo Payments — meters, events, pricing per unit, and metered subscriptions.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/usage-based-billing"
+      ]
+    },
+    {
+      "name": "webhook-integration",
+      "description": "Complete guide for setting up and handling Dodo Payments webhooks for real-time payment event notifications.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/webhook-integration"
+      ]
+    }
+  ]
+}
