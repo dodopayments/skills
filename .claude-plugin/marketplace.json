@@ -1,0 +1,14 @@
+{
+  "name": "Dodo Payments Skills",
+  "description": "Agent Skills for Dodo Payments",
+  "skills": [
+    "dodo-payments/best-practices",
+    "dodo-payments/billing-sdk",
+    "dodo-payments/checkout-integration",
+    "dodo-payments/credit-based-billing",
+    "dodo-payments/license-keys",
+    "dodo-payments/subscription-integration",
+    "dodo-payments/usage-based-billing",
+    "dodo-payments/webhook-integration"
+  ]
+}
