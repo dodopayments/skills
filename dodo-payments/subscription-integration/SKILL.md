@@ -1,39 +1,52 @@
 ---
 name: subscription-integration
-description: Guide for implementing subscription billing with Dodo Payments - trials, upgrades, downgrades, and on-demand billing.
+description: Guide for managing recurring subscriptions after checkout, including trials, lifecycle states, plan changes, cancellation, failed-payment recovery, proration, mandates, and on-demand charges.
 ---
 
 # Dodo Payments Subscription Integration
 
-**Reference: [docs.dodopayments.com/developer-resources/subscription-integration-guide](https://docs.dodopayments.com/developer-resources/subscription-integration-guide)**
+Implement recurring billing with trials, plan changes, and on-demand charging. Subscriptions are created through Checkout Sessions, managed via the subscriptions API, and monitored through webhooks.
 
-Implement recurring billing with trials, plan changes, and usage-based pricing.
+## When to use this skill
+
+- Building a subscription product with recurring billing and trials
+- Handling plan upgrades, downgrades, and migrations mid-cycle
+- Implementing on-demand/off-session charging with mandates
+- Managing failed payments and dunning recovery
+- Building a customer self-service portal for subscription management
 
 ---
 
-## Quick Start
+## Core Concepts
 
-### 1. Create Subscription Product
-In the dashboard (Products → Create Product):
-- Select "Subscription" type
-- Set billing interval (monthly, yearly, etc.)
-- Configure pricing
+**Subscription lifecycle:** The six subscription statuses are `pending`, `active`, `on_hold`, `cancelled`, `failed`, and `expired`. A trialing subscription reports `active`; `subscription.renewed` is an event, not a status. Failed payments can move a subscription to `on_hold` (recoverable) or `failed` (terminal). Cancellation sets it to `cancelled` or schedules it to become `expired` at period end.
 
-### 2. Create Checkout Session
+**Checkout Sessions:** The recommended path for creating subscriptions. A single-use hosted checkout that collects payment and customer data, then creates the subscription server-side.
+
+**Proration:** When a customer changes plans mid-cycle, Dodo calculates credits or charges based on the time remaining. Proration mode controls whether the customer is billed immediately, credited, or neither.
+
+**Mandates:** Authorization to charge a customer's payment method repeatedly (for subscriptions) or on-demand (for usage-based billing). Created during Checkout, can be updated if payment fails.
+
+---
+
+## Creating a Subscription
+
+### Via Checkout Session (Recommended)
 
 ```typescript
 import DodoPayments from 'dodopayments';
 
 const client = new DodoPayments({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  environment: 'test_mode',
 });
 
 const session = await client.checkoutSessions.create({
   product_cart: [
-    { product_id: 'prod_monthly_plan', quantity: 1 }
+    { product_id: 'pdt_monthly_plan', quantity: 1 }
   ],
   subscription_data: {
-    trial_period_days: 14, // Optional trial
+    trial_period_days: 14, // Optional
   },
   customer: {
     email: 'subscriber@example.com',
@@ -42,37 +55,262 @@ const session = await client.checkoutSessions.create({
   return_url: 'https://yoursite.com/success',
 });
 
-// Redirect to session.checkout_url
+// Redirect user to session.checkout_url
+console.log('Redirect to:', session.checkout_url);
 ```
 
-### 3. Handle Webhook Events
+The customer completes payment on the hosted checkout. On success, Dodo creates the subscription and fires the `subscription.active` webhook.
+
+### With Add-ons
+
 ```typescript
-// subscription.active - Grant access
-// subscription.cancelled - Schedule access revocation
-// subscription.renewed - Log renewal
-// payment.succeeded - Track payments
+const session = await client.checkoutSessions.create({
+  product_cart: [
+    {
+      product_id: 'pdt_pro_monthly',
+      quantity: 1,
+      addons: [
+        { addon_id: 'adn_extra_seats', quantity: 3 }
+      ]
+    }
+  ],
+  subscription_data: {
+    trial_period_days: 7,
+  },
+  customer: { email: 'user@example.com' },
+  return_url: 'https://yoursite.com/success',
+});
 ```
 
 ---
 
-## Subscription Lifecycle
+## Subscription Lifecycle & Status
 
+| Status | Meaning | Transitions |
+|--------|---------|-----------|
+| `pending` | Creation in progress | → `active`, `failed` |
+| `active` | Actively renewing | → `on_hold`, `cancelled`, `expired` |
+| `on_hold` | Renewal/plan-change payment failed; recoverable | → `active` (payment method updated), `failed` (retries exhausted), `cancelled` |
+| `cancelled` | Will not renew | → `expired` (at period end) |
+| `failed` | Initial mandate/payment failed; terminal | (no recovery) |
+| `expired` | Subscription term ended | (terminal) |
+
+**Trial period:** If `trial_period_days` is set, the subscription enters `active` immediately but charges nothing until the trial ends. The first charge occurs on the trial end date.
+
+---
+
+## Subscription Methods
+
+### Retrieve
+
+```typescript
+const subscription = await client.subscriptions.retrieve('sub_xxxxx');
+console.log(subscription.status, subscription.next_billing_date);
 ```
-┌─────────────┐     ┌─────────┐     ┌────────┐
-│   Created   │ ──▶ │  Trial  │ ──▶ │ Active │
-└─────────────┘     └─────────┘     └────────┘
-                                         │
-                    ┌────────────────────┼────────────────────┐
-                    ▼                    ▼                    ▼
-              ┌──────────┐        ┌───────────┐        ┌───────────┐
-              │ On Hold  │        │ Cancelled │        │  Renewed  │
-              └──────────┘        └───────────┘        └───────────┘
-                    │                    │
-                    ▼                    ▼
-              ┌──────────┐        ┌───────────┐
-              │  Failed  │        │  Expired  │
-              └──────────┘        └───────────┘
+
+### Update Payment Method
+
+When a subscription is `on_hold` due to failed payment, the customer can update their payment method. This automatically charges any outstanding dues.
+
+```typescript
+await client.subscriptions.updatePaymentMethod('sub_xxxxx', {
+  payment_method: {
+    type: 'existing',
+    payment_method_id: 'pm_new_method',
+  },
+});
 ```
+
+Success emits `payment.succeeded` followed by `subscription.active`.
+
+### List Usage History (Metered Subscriptions)
+
+```typescript
+const history = await client.subscriptions.retrieveUsageHistory('sub_xxxxx', {
+  page_size: 50,
+  page_number: 0,
+});
+```
+
+### Retrieve Credit Usage
+
+```typescript
+const creditUsage = await client.subscriptions.retrieveCreditUsage('sub_xxxxx');
+console.log('Subscription:', creditUsage.subscription_id);
+
+for (const item of creditUsage.items) {
+  console.log(item.credit_entitlement_name, item.balance); // balance is a string
+}
+```
+
+---
+
+## Plan Changes (Upgrades & Downgrades)
+
+### Change Plan
+
+```typescript
+await client.subscriptions.changePlan('sub_xxxxx', {
+  product_id: 'pdt_higher_tier',
+  quantity: 1,
+  proration_billing_mode: 'prorated_immediately',
+  on_payment_failure: 'prevent_change',
+});
+```
+
+**Proration modes:**
+
+| Mode | Upgrade | Downgrade | Billing date |
+|------|---------|-----------|--------------|
+| `prorated_immediately` | Time-prorated charge | Time-prorated credit | Resets to change date |
+| `difference_immediately` | Full new-plan charge | Difference becomes credit | Resets |
+| `full_immediately` | Full new-plan charge | Full new-plan charge, no credit | Resets |
+| `do_not_bill` | No charge | No credit | Preserved |
+
+**Payment failure handling:**
+
+- `prevent_change`: Keep the old plan if the charge fails.
+- `apply_change`: Apply the new plan even if payment fails (subscription may become `on_hold`).
+
+### Preview Plan Change
+
+Show the customer a quote before committing:
+
+```typescript
+const preview = await client.subscriptions.previewChangePlan('sub_xxxxx', {
+  product_id: 'pdt_new_plan',
+  quantity: 1,
+  proration_billing_mode: 'prorated_immediately',
+});
+
+console.log('Effective at:', preview.immediate_charge.effective_at);
+console.log('Line items:', preview.immediate_charge.line_items);
+console.log('Summary:', preview.immediate_charge.summary);
+console.log('New plan:', preview.new_plan);
+```
+
+### Cancel a Scheduled Plan Change
+
+```typescript
+await client.subscriptions.cancelChangePlan('sub_xxxxx');
+```
+
+---
+
+## Cancellation
+
+### Immediate Cancellation
+
+```typescript
+await client.subscriptions.update('sub_xxxxx', {
+  status: 'cancelled',
+});
+```
+
+Access is revoked immediately.
+
+### Cancel at Period End
+
+```typescript
+await client.subscriptions.update('sub_xxxxx', {
+  cancel_at_next_billing_date: true,
+});
+```
+
+The subscription remains `active` until the next billing date, then transitions to `expired`. The `subscription.cancelled` webhook includes `cancel_at_next_billing_date: true` and `next_billing_date` so you know when to revoke access.
+
+---
+
+## On-Demand (Off-Session) Charging
+
+For usage-based or metered subscriptions, charge the customer on-demand without a scheduled renewal.
+
+### Create Subscription with Mandate
+
+```typescript
+const session = await client.checkoutSessions.create({
+  product_cart: [
+    { product_id: 'pdt_usage_based', quantity: 1 }
+  ],
+  subscription_data: {
+    on_demand: {
+      mandate_only: true,
+    }
+  },
+  customer: { email: 'user@example.com' },
+  return_url: 'https://yoursite.com/success',
+});
+```
+
+This creates a subscription with a mandate but no automatic renewal. You control when to charge.
+
+### Charge On-Demand
+
+```typescript
+const charge = await client.subscriptions.charge('sub_xxxxx', {
+  product_price: 2500, // $25.00 in cents
+  product_currency: 'USD',
+  product_description: 'API calls for January 2025',
+});
+
+console.log('Payment ID:', charge.payment_id);
+```
+
+Amounts are in the smallest currency unit (cents for USD, paise for INR, etc.).
+
+**Dodo does not automatically retry on-demand charges.** You own retry logic and decline filtering. Monitor `payment.failed` webhooks and implement your own retry strategy.
+
+---
+
+## Failed Payments & Recovery
+
+### On-Hold Subscriptions
+
+When a renewal or plan-change charge fails, the subscription moves to `on_hold`. This is recoverable.
+
+```typescript
+// Listen for subscription.on_hold webhook
+case 'subscription.on_hold':
+  // Notify customer, offer payment method update
+  await sendPaymentFailedEmail(data.customer.customer_id);
+  break;
+```
+
+### Recovery Options
+
+1. **Payment Retries:** Opt-in under Settings → Recovery. Dodo retries failed renewals up to 8 times over a configurable 1–30 day window (default 13 days). Only for soft declines.
+
+2. **Customer Portal:** Customer updates payment method → automatic charge for outstanding dues → `subscription.active`.
+
+3. **Manual Charge:** You update the payment method server-side, then call `updatePaymentMethod()`.
+
+### Dunning
+
+Dunning sends up to four configurable emails for `on_hold` renewals and customer-portal cancellations. Exhausted dunning does not change the subscription state; you must handle the final outcome.
+
+---
+
+## Customer Portal
+
+Allow customers to self-serve: view subscriptions, update payment methods, cancel, and upgrade/downgrade.
+
+```typescript
+const portalSession = await client.customers.customerPortal.create(
+  'cus_xxxxx',
+  { return_url: 'https://yoursite.com/account' }
+);
+
+// Redirect to portalSession.link
+```
+
+Portal links expire after 24 hours. Customers can:
+- View subscription details and renewal dates
+- Cancel immediately or at period end
+- Upgrade/downgrade within enabled Product Collections
+- Update payment methods and reactivate `on_hold` subscriptions
+- View billing history and download invoices
+
+For full customer management (creating, updating, listing), see the `customer-management` skill.
 
 ---
 
@@ -80,492 +318,173 @@ const session = await client.checkoutSessions.create({
 
 | Event | When | Action |
 |-------|------|--------|
-| `subscription.active` | Subscription starts | Grant access |
-| `subscription.updated` | Any field changes | Sync state |
-| `subscription.on_hold` | Payment fails | Notify user, retry |
-| `subscription.renewed` | Successful renewal | Log, send receipt |
-| `subscription.plan_changed` | Upgrade/downgrade | Update entitlements |
-| `subscription.cancelled` | User cancels | Schedule end of access |
-| `subscription.failed` | Mandate creation fails | Notify, retry options |
-| `subscription.expired` | Term ends | Revoke access |
+| `subscription.active` | Subscription becomes active, including a trial start or recovery | Grant access |
+| `subscription.renewed` | Successful renewal | Log renewal, send receipt |
+| `subscription.on_hold` | Renewal/plan-change payment failed | Notify customer, offer recovery |
+| `subscription.plan_changed` | Plan upgraded/downgraded or add-ons changed | Update entitlements |
+| `subscription.cancelled` | Customer cancels | Schedule access revocation per `cancel_at_next_billing_date` |
+| `subscription.failed` | Initial mandate/payment failed | Notify customer, offer retry or new subscription |
+| `subscription.expired` | Subscription term ended | Revoke access |
 
----
+Webhook signature verification, raw-body handling, durable processing, and idempotency are covered in the `webhook-integration` skill.
 
-## Implementation Examples
-
-### Full Subscription Handler
+### Example Handler
 
 ```typescript
-// app/api/webhooks/subscription/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
 
 export async function POST(req: NextRequest) {
-  const event = await req.json();
-  const data = event.data;
+  const raw = await req.text();
+  const headers = Object.fromEntries(req.headers.entries());
+  const event = await client.webhooks.unwrap(raw, { headers });
+  const webhookId = req.headers.get('webhook-id');
+
+  if (!webhookId) {
+    return NextResponse.json({ error: 'Missing webhook-id' }, { status: 400 });
+  }
+
+  // Implement this as an atomic insert backed by a UNIQUE constraint.
+  // Keep the claim and entitlement changes in the same database transaction.
+  const claimed = await claimWebhookId(webhookId);
+  if (!claimed) {
+    return NextResponse.json({ received: true });
+  }
 
   switch (event.type) {
     case 'subscription.active':
-      await handleSubscriptionActive(data);
-      break;
-    case 'subscription.cancelled':
-      await handleSubscriptionCancelled(data);
+      await grantAccess(event.data.customer.customer_id, event.data.product_id);
       break;
     case 'subscription.on_hold':
-      await handleSubscriptionOnHold(data);
+      await notifyPaymentFailed(event.data.customer.customer_id);
       break;
-    case 'subscription.renewed':
-      await handleSubscriptionRenewed(data);
-      break;
-    case 'subscription.plan_changed':
-      await handlePlanChanged(data);
+    case 'subscription.cancelled':
+      if (event.data.cancel_at_next_billing_date) {
+        await scheduleAccessRevocation(event.data.subscription_id, new Date(event.data.next_billing_date));
+      } else {
+        await revokeAccessImmediately(event.data.subscription_id);
+      }
       break;
     case 'subscription.expired':
-      await handleSubscriptionExpired(data);
+      await revokeAccess(event.data.customer.customer_id);
       break;
   }
 
   return NextResponse.json({ received: true });
 }
-
-async function handleSubscriptionActive(data: any) {
-  const {
-    subscription_id,
-    customer,
-    product_id,
-    next_billing_date,
-    recurring_pre_tax_amount,
-    payment_frequency_interval,
-  } = data;
-
-  // Create or update user subscription
-  await prisma.subscription.upsert({
-    where: { externalId: subscription_id },
-    create: {
-      externalId: subscription_id,
-      userId: customer.customer_id,
-      email: customer.email,
-      productId: product_id,
-      status: 'active',
-      currentPeriodEnd: new Date(next_billing_date),
-      amount: recurring_pre_tax_amount,
-      interval: payment_frequency_interval,
-    },
-    update: {
-      status: 'active',
-      currentPeriodEnd: new Date(next_billing_date),
-    },
-  });
-
-  // Grant access
-  await prisma.user.update({
-    where: { id: customer.customer_id },
-    data: { 
-      subscriptionStatus: 'active',
-      plan: product_id,
-    },
-  });
-
-  // Send welcome email
-  await sendWelcomeEmail(customer.email, product_id);
-}
-
-async function handleSubscriptionCancelled(data: any) {
-  const { subscription_id, customer, cancelled_at, cancel_at_next_billing_date } = data;
-
-  await prisma.subscription.update({
-    where: { externalId: subscription_id },
-    data: {
-      status: 'cancelled',
-      cancelledAt: new Date(cancelled_at),
-      // Keep access until end of billing period if cancel_at_next_billing_date
-      accessEndsAt: cancel_at_next_billing_date 
-        ? new Date(data.next_billing_date) 
-        : new Date(),
-    },
-  });
-
-  // Send cancellation email
-  await sendCancellationEmail(customer.email, cancel_at_next_billing_date);
-}
-
-async function handleSubscriptionOnHold(data: any) {
-  const { subscription_id, customer } = data;
-
-  await prisma.subscription.update({
-    where: { externalId: subscription_id },
-    data: { status: 'on_hold' },
-  });
-
-  // Notify user about payment issue
-  await sendPaymentFailedEmail(customer.email);
-}
-
-async function handleSubscriptionRenewed(data: any) {
-  const { subscription_id, next_billing_date } = data;
-
-  await prisma.subscription.update({
-    where: { externalId: subscription_id },
-    data: {
-      status: 'active',
-      currentPeriodEnd: new Date(next_billing_date),
-    },
-  });
-}
-
-async function handlePlanChanged(data: any) {
-  const { subscription_id, product_id, recurring_pre_tax_amount } = data;
-
-  await prisma.subscription.update({
-    where: { externalId: subscription_id },
-    data: {
-      productId: product_id,
-      amount: recurring_pre_tax_amount,
-    },
-  });
-
-  // Update user entitlements based on new plan
-  await updateUserEntitlements(subscription_id, product_id);
-}
-
-async function handleSubscriptionExpired(data: any) {
-  const { subscription_id, customer } = data;
-
-  await prisma.subscription.update({
-    where: { externalId: subscription_id },
-    data: { status: 'expired' },
-  });
-
-  // Revoke access
-  await prisma.user.update({
-    where: { id: customer.customer_id },
-    data: { 
-      subscriptionStatus: 'expired',
-      plan: null,
-    },
-  });
-}
 ```
 
-### Subscription with Trial
+---
+
+## Credit Entitlements
+
+Attach credit entitlements to subscription products to grant credits each billing cycle. For full credit management, see the `credit-based-billing` skill.
+
+Quick example:
 
 ```typescript
+// Product has credit entitlement attached (e.g., 10,000 tokens/month)
 const session = await client.checkoutSessions.create({
   product_cart: [
-    { product_id: 'prod_pro_monthly', quantity: 1 }
+    { product_id: 'pdt_pro_with_credits', quantity: 1 }
   ],
   subscription_data: {
     trial_period_days: 14,
   },
-  customer: {
-    email: 'user@example.com',
-    name: 'John Doe',
-  },
-  return_url: 'https://yoursite.com/welcome',
-});
-```
-
-### Customer Portal for Self-Service
-
-Allow customers to manage their subscription:
-
-```typescript
-// Create portal session
-const portal = await client.customers.createPortalSession({
-  customer_id: 'cust_xxxxx',
-  return_url: 'https://yoursite.com/account',
-});
-
-// Redirect to portal.url
-```
-
-Portal features:
-- View subscription details
-- Update payment method
-- Cancel subscription
-- View billing history
-
----
-
-## On-Demand (Usage-Based) Subscriptions
-
-For metered/usage-based billing:
-
-### Create Subscription with Mandate
-
-```typescript
-const session = await client.checkoutSessions.create({
-  product_cart: [
-    { product_id: 'prod_usage_based', quantity: 1 }
-  ],
   customer: { email: 'user@example.com' },
   return_url: 'https://yoursite.com/success',
 });
 ```
 
-### Charge for Usage
-
-```typescript
-// When usage occurs, create a charge
-const charge = await client.subscriptions.charge({
-  subscription_id: 'sub_xxxxx',
-  amount: 1500, // $15.00 in cents
-  description: 'API calls for January 2025',
-});
-```
-
-### Track Usage Events
-
-```typescript
-// payment.succeeded - Charge succeeded
-// payment.failed - Charge failed, implement retry logic
-```
+On each renewal, credits are issued. Monitor `credit.added` and `credit.deducted` webhooks to sync your ledger.
 
 ---
 
-## Subscriptions with Credit Entitlements
+## Common Mistakes
 
-Attach credit entitlements to subscription products to grant credits each billing cycle:
+### 1. Granting Access on `return_url` Instead of Webhook
 
-### Setup
-
-1. Create a credit entitlement (Dashboard → Products → Credits)
-2. Create/edit a subscription product
-3. In **Entitlements** section, click **Attach** next to Credits
-4. Configure: credits per cycle, trial credits, proration, low balance threshold
-
-### Checkout with Credits
-
+**Wrong:**
 ```typescript
-// Product has credit entitlement attached (e.g., 10,000 AI tokens/month)
+// On return_url redirect
+await grantAccess(user.id);
+```
+
+The `return_url` is hit before the subscription is fully created. Dodo may still be processing the mandate or payment. Always wait for `subscription.active` webhook.
+
+**Right:**
+```typescript
+// In webhook handler
+case 'subscription.active':
+  await grantAccess(data.customer.customer_id);
+  break;
+```
+
+### 2. Using Deprecated `subscriptions.create`
+
+**Wrong:**
+```typescript
+const sub = await client.subscriptions.create({
+  product_id: 'pdt_monthly',
+  customer_id: 'cus_xxxxx',
+});
+```
+
+This endpoint is deprecated. Use Checkout Sessions.
+
+**Right:**
+```typescript
 const session = await client.checkoutSessions.create({
-  product_cart: [
-    { product_id: 'prod_pro_with_credits', quantity: 1 }
-  ],
-  subscription_data: {
-    trial_period_days: 14, // Trial credits can differ from regular amount
-  },
-  customer: { email: 'user@example.com' },
+  product_cart: [{ product_id: 'pdt_monthly', quantity: 1 }],
+  customer: { customer_id: 'cus_xxxxx' },
   return_url: 'https://yoursite.com/success',
 });
 ```
 
-### Credit Lifecycle per Cycle
+### 3. Misinterpreting `subscription.plan_changed`
 
-Each billing cycle:
-1. **New credits issued** — `credit.added` webhook fires
-2. **Usage deducts credits** — Automatically via meters or manually via API
-3. **Cycle ends** — Unused credits expire or roll over based on settings
-4. **Overage handled** — Forgiven, billed, or carried as deficit
+`subscription.plan_changed` fires for upgrades, downgrades, add-on changes, AND when `cancel_at_next_billing_date` is toggled. Don't assume every `plan_changed` event means a paid upgrade succeeded. Inspect the payload and check the subscription's current `product_id`.
 
-### Handle Credit Webhooks in Subscription Context
+### 4. Forgetting Proration Mode
+
+**Wrong:**
 
 ```typescript
-case 'credit.added':
-  // Credits issued with subscription renewal
-  await syncCreditBalance(data.customer_id, data.credit_entitlement_id, data.balance_after);
-  break;
-case 'credit.balance_low':
-  // Notify customer or suggest upgrade
-  await sendLowBalanceAlert(data.customer_id, data.credit_entitlement_name, data.available_balance);
-  break;
-case 'credit.deducted':
-  // Track consumption for analytics
-  await logCreditUsage(data.customer_id, data.amount);
-  break;
-```
-
-### Plan Changes with Credits
-
-When customers upgrade/downgrade, credit proration can be enabled:
-- **Proration enabled**: Remaining credits are prorated based on time left in cycle
-- **Proration disabled**: Credits continue as-is until next cycle
-
-## Plan Changes
-
-### Upgrade/Downgrade Flow
-
-```typescript
-// Get available plans
-const plans = await client.products.list({
-  type: 'subscription',
-});
-
-// Change plan
-await client.subscriptions.update({
-  subscription_id: 'sub_xxxxx',
-  product_id: 'prod_new_plan',
-  proration_behavior: 'create_prorations', // or 'none'
+// Missing proration_billing_mode
+await client.subscriptions.changePlan('sub_xxxxx', {
+  product_id: 'pdt_new',
+  quantity: 1,
+  // proration_billing_mode: 'prorated_immediately', // REQUIRED
 });
 ```
 
-### Handling `subscription.plan_changed`
+This will fail. Always specify a proration mode.
+
+### 5. Confusing `on_hold` with Pause
+
+`on_hold` means payment failed, not that the customer paused. There is no general pause/resume operation. `on_hold` is recoverable only by updating the payment method or waiting for retry.
+
+### 6. Not Handling `cancel_at_next_billing_date`
 
 ```typescript
-async function handlePlanChanged(data: any) {
-  const { subscription_id, product_id, customer } = data;
-  
-  // Map product to features/limits
-  const planFeatures = getPlanFeatures(product_id);
-  
-  await prisma.user.update({
-    where: { externalId: customer.customer_id },
-    data: {
-      plan: product_id,
-      features: planFeatures,
-      apiLimit: planFeatures.apiLimit,
-      storageLimit: planFeatures.storageLimit,
-    },
-  });
-}
-```
+// Wrong: revoke immediately
+await revokeAccess(data.customer.customer_id);
 
----
-
-## Access Control Pattern
-
-### Middleware Example (Next.js)
-
-```typescript
-// middleware.ts
-import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
-
-export async function middleware(request: NextRequest) {
-  // Check subscription status
-  const session = await getSession(request);
-  
-  if (!session?.user) {
-    return NextResponse.redirect(new URL('/login', request.url));
-  }
-
-  const subscription = await getSubscription(session.user.id);
-
-  // Check if accessing premium feature
-  if (request.nextUrl.pathname.startsWith('/dashboard/pro')) {
-    if (!subscription || subscription.status !== 'active') {
-      return NextResponse.redirect(new URL('/pricing', request.url));
-    }
-    
-    // Check if plan includes this feature
-    if (!subscription.features.includes('pro')) {
-      return NextResponse.redirect(new URL('/upgrade', request.url));
-    }
-  }
-
-  return NextResponse.next();
-}
-```
-
-### React Hook for Subscription State
-
-```typescript
-// hooks/useSubscription.ts
-import useSWR from 'swr';
-
-export function useSubscription() {
-  const { data, error, mutate } = useSWR('/api/subscription', fetcher);
-
-  return {
-    subscription: data,
-    isLoading: !error && !data,
-    isError: error,
-    isActive: data?.status === 'active',
-    isPro: data?.plan?.includes('pro'),
-    refresh: mutate,
-  };
-}
-
-// Usage in component
-function PremiumFeature() {
-  const { isActive, isPro } = useSubscription();
-
-  if (!isActive) {
-    return <UpgradePrompt />;
-  }
-
-  if (!isPro) {
-    return <ProUpgradePrompt />;
-  }
-
-  return <ActualFeature />;
-}
-```
-
----
-
-## Common Patterns
-
-### Grace Period for Failed Payments
-
-```typescript
-async function handleSubscriptionOnHold(data: any) {
-  const gracePeriodDays = 7;
-  
-  await prisma.subscription.update({
-    where: { externalId: data.subscription_id },
-    data: {
-      status: 'on_hold',
-      gracePeriodEnds: new Date(Date.now() + gracePeriodDays * 24 * 60 * 60 * 1000),
-    },
-  });
-
-  // Schedule job to revoke access after grace period
-  await scheduleAccessRevocation(data.subscription_id, gracePeriodDays);
-}
-```
-
-### Prorated Upgrades
-
-When upgrading mid-cycle:
-```typescript
-// Dodo handles proration automatically
-// Customer pays difference for remaining days
-await client.subscriptions.update({
-  subscription_id: 'sub_xxxxx',
-  product_id: 'prod_higher_plan',
-  proration_behavior: 'create_prorations',
-});
-```
-
-### Cancellation with End-of-Period Access
-
-```typescript
-// subscription.cancelled event includes:
-// - cancel_at_next_billing_date: boolean
-// - next_billing_date: string (when access should end)
-
+// Right: check the flag
 if (data.cancel_at_next_billing_date) {
-  // Keep access until next_billing_date
-  await scheduleAccessRevocation(
-    data.subscription_id, 
-    new Date(data.next_billing_date)
-  );
+  await scheduleAccessRevocation(data.subscription_id, new Date(data.next_billing_date));
+} else {
+  await revokeAccessImmediately(data.subscription_id);
 }
 ```
-
----
-
-## Testing
-
-### Test Scenarios
-1. New subscription → `subscription.active`
-2. Renewal success → `subscription.renewed` + `payment.succeeded`
-3. Renewal failure → `subscription.on_hold` + `payment.failed`
-4. Plan upgrade → `subscription.plan_changed`
-5. Cancellation → `subscription.cancelled`
-6. Expiration → `subscription.expired`
-
-### Test in Dashboard
-Use test mode and trigger events manually from the webhook settings.
 
 ---
 
 ## Resources
 
-- [Subscription Guide](https://docs.dodopayments.com/developer-resources/subscription-integration-guide)
+- [Subscription Integration Guide](https://docs.dodopayments.com/developer-resources/subscription-integration-guide)
+- [Upgrade & Downgrade Guide](https://docs.dodopayments.com/developer-resources/subscription-upgrade-downgrade)
 - [On-Demand Subscriptions](https://docs.dodopayments.com/developer-resources/ondemand-subscriptions)
-- [Webhook Events](https://docs.dodopayments.com/developer-resources/webhooks/intents/subscription)
-- [Customer Portal](https://docs.dodopayments.com/developer-resources/customer-portal)
-- [Credit-Based Billing](https://docs.dodopayments.com/features/credit-based-billing)
-- [Credit Webhook Events](https://docs.dodopayments.com/developer-resources/webhooks/intents/credit)
+- [Subscription Webhooks](https://docs.dodopayments.com/developer-resources/webhooks/intents/subscription)
+- [Customer Portal](https://docs.dodopayments.com/features/customer-portal)
+- [Subscription Payment Retries](https://docs.dodopayments.com/features/recovery/payment-retries)
+- [Subscription Dunning](https://docs.dodopayments.com/features/recovery/subscription-dunning)

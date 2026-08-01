@@ -5,13 +5,13 @@
     "url": "https://dodopayments.com"
   },
   "metadata": {
-    "description": "Official Agent Skills for Dodo Payments — payments, subscriptions, billing, webhooks, and more.",
-    "version": "1.0.0"
+    "description": "Official Agent Skills for Dodo Payments — payments, checkout, subscriptions, usage and credit billing, webhooks, and more.",
+    "version": "2.0.0"
   },
   "plugins": [
     {
       "name": "dodo-best-practices",
-      "description": "Comprehensive guide for integrating Dodo Payments — the all-in-one payment and billing platform for SaaS and AI products.",
+      "description": "Guide for initial Dodo Payments setup, including SDK installation, test and live environments, API keys, and the canonical checkout-to-webhook architecture.",
       "source": "./",
       "strict": false,
       "skills": [
@@ -19,8 +19,17 @@
       ]
     },
     {
+      "name": "better-auth-integration",
+      "description": "Guide only for applications using @dodopayments/better-auth, covering authenticated customer sync, checkout, portal access, usage ingestion, and verified webhook callbacks.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/better-auth-integration"
+      ]
+    },
+    {
       "name": "billing-sdk",
-      "description": "Guide for using BillingSDK — open-source React components for pricing tables, subscription management, and billing UI with Dodo Payments.",
+      "description": "Guide for building billing UI with BillingSDK - the open-source React component library for pricing tables, subscription management, usage meters, invoice history, and customer portal flows wired to Dodo Payments.",
       "source": "./",
       "strict": false,
       "skills": [
@@ -29,7 +38,7 @@
     },
     {
       "name": "checkout-integration",
-      "description": "Guide for creating checkout sessions and payment flows with Dodo Payments — one-time, subscriptions, and overlay checkout.",
+      "description": "Guide for starting hosted Checkout Sessions, payment links, and overlay or inline checkout for one-time and recurring products; use subscription-integration for post-checkout lifecycle management.",
       "source": "./",
       "strict": false,
       "skills": [
@@ -38,7 +47,7 @@
     },
     {
       "name": "credit-based-billing",
-      "description": "Guide for implementing credit-based billing with Dodo Payments — credit entitlements, balances, ledger management, rollover, overage, and meter-based deduction.",
+      "description": "Complete guide for giving customers included, free, prepaid, promotional, or top-up credits using grants, balances, ledger deductions, rollover, expiry, alerts, and overage.",
       "source": "./",
       "strict": false,
       "skills": [
@@ -46,8 +55,35 @@
       ]
     },
     {
+      "name": "customer-management",
+      "description": "Guide for managing customer records, saved payment methods, monetary wallets, and hosted customer-portal sessions; subscription lifecycle and custom billing UI are covered separately.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/customer-management"
+      ]
+    },
+    {
+      "name": "discounts-and-promotions",
+      "description": "Guide for implementing discount codes and promotional pricing with Dodo Payments, including CRUD operations, eligibility rules, stacking, subscription-cycle limits, and plan-change preservation.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/discounts-and-promotions"
+      ]
+    },
+    {
+      "name": "framework-adapters",
+      "description": "Guide for mounting official @dodopayments/* checkout, portal, and verified-webhook route handlers in supported web frameworks; use domain skills for payment and lifecycle logic.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/framework-adapters"
+      ]
+    },
+    {
       "name": "license-keys",
-      "description": "Guide for implementing license key management with Dodo Payments — activation, validation, and access control for software products.",
+      "description": "Guide for implementing license key management with Dodo Payments - activation, validation, and access control for software products.",
       "source": "./",
       "strict": false,
       "skills": [
@@ -55,8 +91,44 @@
       ]
     },
     {
+      "name": "localized-pricing",
+      "description": "Guide for implementing localized pricing, adaptive currency, and purchasing power parity with Dodo Payments",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/localized-pricing"
+      ]
+    },
+    {
+      "name": "mobile-checkout",
+      "description": "Guide for implementing mobile in-app checkout with Dodo Payments across React Native, Flutter, iOS, and Android platforms.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/mobile-checkout"
+      ]
+    },
+    {
+      "name": "product-catalog-management",
+      "description": "Guide for creating and managing products, pricing, add-ons, product collections, images, and digital product delivery",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/product-catalog-management"
+      ]
+    },
+    {
+      "name": "refunds-and-disputes",
+      "description": "Guide for issuing refunds, handling disputes and chargebacks, and reconciling customer access with Dodo Payments",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/refunds-and-disputes"
+      ]
+    },
+    {
       "name": "subscription-integration",
-      "description": "Guide for implementing subscription billing with Dodo Payments — trials, upgrades, downgrades, and on-demand billing.",
+      "description": "Guide for managing recurring subscriptions after checkout, including trials, lifecycle states, plan changes, cancellation, failed-payment recovery, proration, mandates, and on-demand charges.",
       "source": "./",
       "strict": false,
       "skills": [
@@ -64,8 +136,17 @@
       ]
     },
     {
+      "name": "testing-and-go-live",
+      "description": "Guide for test-mode payment scenarios, renewal simulation, local webhook delivery tests, test and live catalog migration, and production launch checks.",
+      "source": "./",
+      "strict": false,
+      "skills": [
+        "./dodo-payments/testing-and-go-live"
+      ]
+    },
+    {
       "name": "usage-based-billing",
-      "description": "Guide for implementing usage-based billing with Dodo Payments — meters, events, pricing per unit, and metered subscriptions.",
+      "description": "Guide for charging directly per measured API call, token, storage unit, or other consumption using meters, stable usage events, aggregation, free thresholds, and metered subscriptions.",
       "source": "./",
       "strict": false,
       "skills": [

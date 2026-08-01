@@ -1,501 +1,488 @@
 ---
 name: billing-sdk
-description: Guide for using BillingSDK - open-source React components for pricing tables, subscription management, and billing UI with Dodo Payments.
+description: Guide for building billing UI with BillingSDK - the open-source React component library for pricing tables, subscription management, usage meters, invoice history, and customer portal flows wired to Dodo Payments.
 ---
 
-# BillingSDK Integration
+# BillingSDK
 
-**Reference: [docs.dodopayments.com/developer-resources/billingsdk](https://docs.dodopayments.com/developer-resources/billingsdk) | [billingsdk.com](https://billingsdk.com)**
+BillingSDK is an open-source React component library for billing interfaces, maintained by Dodo Payments
+at `github.com/dodopayments/billingsdk`. Components are copied into your repository as source files
+(shadcn/ui model) rather than imported from a runtime npm package.
 
-BillingSDK provides open-source, customizable React components for billing interfaces - pricing tables, subscription management, usage meters, and more.
+Use this skill when building the front end. All Dodo Payments API calls belong in server-side route
+handlers; the components are presentation only.
 
----
+## When to use this skill
 
-## Overview
+- Building a pricing page that starts a Dodo checkout.
+- Building an account/billing page with subscription details and a "Manage billing" button.
+- Rendering usage meters, credit balances, invoice history, or upcoming charges.
+- Adding cancel / upgrade / downgrade UI to an existing React or Next.js app.
+- Deciding whether to scaffold with `@billingsdk/cli init` or add individual components.
 
-BillingSDK offers:
-- **React Components**: Pre-built, customizable billing components
-- **CLI Tooling**: Project initialization and component management
-- **Framework Support**: Next.js, Express.js, Hono, Fastify, React
-- **Payment Provider**: Full integration with Dodo Payments
+## Core concepts
 
----
+**Source-installed, not a dependency.** The repository root package `billingsdk` is private. There is no
+verified general-purpose runtime npm component package. You install components through the CLI or the
+shadcn registry, and the `.tsx` files land in your project under `components/billingsdk/`.
 
-## Quick Start Options
+**The installed file is the prop contract.** Because components are vendored into your repo, the exported
+props type in `components/billingsdk/<component>.tsx` is authoritative for your version. Read it before
+wiring callbacks. Do not assume prop names from another project.
 
-### Option 1: New Project (Recommended)
-Complete project setup with framework configuration and API routes:
+**The registry is the installability source of truth.** Use
+[`registry.json`](https://github.com/dodopayments/billingsdk/blob/main/registry.json). The docs navigation
+has drifted from it — for example `payment-success-dialog` appears in navigation but not in the current
+registry. If `add` fails, the block is not in the registry.
+
+**Components never call Dodo.** They receive data and fire callbacks. Every Dodo Payments call runs on your
+server with `DODO_PAYMENTS_API_KEY`. That key is `dodo_test_...` or `dodo_live_...` and must never reach
+the browser.
+
+## Installation
+
+Scaffold a new integration (framework config, API routes, `useBilling` hooks, `lib/dodopayments.ts`,
+dependencies, and env vars `DODO_PAYMENTS_API_KEY`, `DODO_PAYMENTS_ENVIRONMENT`,
+`DODO_PAYMENTS_WEBHOOK_KEY`):
 
 ```bash
 npx @billingsdk/cli init
 ```
 
-The CLI will:
-- Configure your framework (Next.js App Router)
-- Set up Dodo Payments integration
-- Generate API routes for checkout, customers, webhooks
-- Install dependencies
-- Create configuration files
-
-### Option 2: Add to Existing Project
-Add individual components using the CLI:
+Add a single component to an existing project:
 
 ```bash
 npx @billingsdk/cli add pricing-table-one
-npx @billingsdk/cli add subscription-management
-npx @billingsdk/cli add usage-meter-circle
 ```
 
-### Option 3: Manual via shadcn/ui
-Install directly using shadcn registry:
+Or install through the shadcn registry using the `@billingsdk/` namespace:
 
 ```bash
 npx shadcn@latest add @billingsdk/pricing-table-one
 ```
 
----
+The published CLI package is `@billingsdk/cli`, most recently seen at version 0.9.0.
 
-## CLI Reference
+## Component inventory
 
-### Initialize Project
+From the current official registry, grouped by purpose:
 
-```bash
-npx @billingsdk/cli init
+| Group | Blocks |
+|---|---|
+| Pricing | `pricing-table-one` through `pricing-table-eight` |
+| Subscription | `subscription-management`, `usage-based-pricing`, `invoice-history`, `update-plan-card`, `update-plan-dialog`, `proration-preview`, `cancel-subscription-card`, `cancel-subscription-dialog` |
+| Usage and billing | `usage-meter-linear`, `usage-meter-circle`, `usage-table`, `detailed-usage-table`, `billing-screen`, `billing-settings`, `billing-settings-2`, `upcoming-charges` |
+| Payments | `payment-details`, `payment-details-two`, `payment-method-selector`, `payment-card`, `payment-failure` |
+| Promotion and trials | `banner`, `limited-offer-dialog`, `trial-expiry-card` |
+
+`pricing-table-one` is the only block with an officially published prop example, reproduced below. For
+every other block, run `add` and read the generated file's props type.
+
+## Server client
+
+One module, imported only by route handlers and server components.
+
+```typescript
+// lib/dodopayments.ts
+import DodoPayments from 'dodopayments';
+
+if (!process.env.DODO_PAYMENTS_API_KEY) {
+  throw new Error('DODO_PAYMENTS_API_KEY is not set');
+}
+
+export const dodo = new DodoPayments({
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  environment: process.env.DODO_PAYMENTS_ENVIRONMENT === 'live_mode' ? 'live_mode' : 'test_mode',
+});
 ```
 
-Interactive setup prompts:
-1. Select framework (Next.js, Express.js, Hono, Fastify, React)
-2. Select payment provider (Dodo Payments)
-3. Configure project settings
+`environment` defaults to `'live_mode'` when omitted, so set it explicitly during development. Base URLs
+are `https://test.dodopayments.com` and `https://live.dodopayments.com`.
 
-### Add Components
+## Pricing page
 
-```bash
-npx @billingsdk/cli add <component-name>
-```
+### 1. Plan catalogue
 
-**Available components:**
-- `pricing-table-one` - Simple pricing table
-- `pricing-table-two` - Feature-rich pricing table
-- `subscription-management` - Manage active subscriptions
-- `usage-meter-circle` - Circular usage visualization
-- More components available...
+Keep the product ids and the display copy in one module. The `price` here is a display number rendered by
+the component — the amount actually charged comes from the Dodo product catalogue, and Dodo API amounts
+are always in the smallest currency unit (cents). Treat this file as a mirror of the dashboard and
+reconcile it when you change a price.
 
-### What happens when adding:
-1. Downloads component from registry
-2. Installs files to `components/billingsdk/`
-3. Updates project configuration
-4. Installs additional dependencies
+```typescript
+// lib/plans.ts
+export type PlanId = 'starter' | 'pro';
 
----
+export interface Plan {
+  id: PlanId;
+  title: string;
+  price: number;
+  period: string;
+  features: string[];
+  popular: boolean;
+}
 
-## Components
-
-### Pricing Table One
-
-Simple, clean pricing table for displaying plans.
-
-**Installation:**
-```bash
-npx @billingsdk/cli add pricing-table-one
-# or
-npx shadcn@latest add @billingsdk/pricing-table-one
-```
-
-**Usage:**
-```tsx
-import { PricingTableOne } from "@/components/billingsdk/pricing-table-one";
-
-const plans = [
+export const PLANS: readonly Plan[] = [
   {
-    id: 'prod_free',
-    name: 'Free',
-    price: 0,
-    interval: 'month',
-    features: ['5 projects', 'Basic support'],
+    id: 'starter',
+    title: 'Starter',
+    price: 9,
+    period: 'month',
+    features: ['100 requests', 'Basic support', '1 project'],
+    popular: false,
   },
   {
-    id: 'prod_pro',
-    name: 'Pro',
+    id: 'pro',
+    title: 'Pro',
     price: 29,
-    interval: 'month',
-    features: ['Unlimited projects', 'Priority support', 'API access'],
+    period: 'month',
+    features: ['Unlimited requests', 'Priority support', '10 projects'],
     popular: true,
   },
-  {
-    id: 'prod_enterprise',
-    name: 'Enterprise',
-    price: 99,
-    interval: 'month',
-    features: ['Everything in Pro', 'Custom integrations', 'Dedicated support'],
-  },
 ];
-
-export function PricingPage() {
-  const handleSelectPlan = async (planId: string) => {
-    // Create checkout session
-    const response = await fetch('/api/checkout', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ productId: planId }),
-    });
-    
-    const { checkoutUrl } = await response.json();
-    window.location.href = checkoutUrl;
-  };
-
-  return (
-    <PricingTableOne 
-      plans={plans}
-      onSelectPlan={handleSelectPlan}
-    />
-  );
-}
 ```
 
-### Pricing Table Two
+### 2. Product id map — server only
 
-Feature-comparison pricing table with toggle for monthly/yearly.
+Never let the browser choose an arbitrary `product_id`. Map the public plan slug to a `pdt_` id on the
+server and reject anything else.
 
-**Installation:**
-```bash
-npx @billingsdk/cli add pricing-table-two
-```
-
-**Usage:**
-```tsx
-import { PricingTableTwo } from "@/components/billingsdk/pricing-table-two";
-
-const plans = [
-  {
-    id: 'prod_starter_monthly',
-    yearlyId: 'prod_starter_yearly',
-    name: 'Starter',
-    monthlyPrice: 19,
-    yearlyPrice: 190,
-    features: [
-      { name: 'Projects', value: '10' },
-      { name: 'Storage', value: '5 GB' },
-      { name: 'Support', value: 'Email' },
-    ],
-  },
-  {
-    id: 'prod_pro_monthly',
-    yearlyId: 'prod_pro_yearly',
-    name: 'Pro',
-    monthlyPrice: 49,
-    yearlyPrice: 490,
-    popular: true,
-    features: [
-      { name: 'Projects', value: 'Unlimited' },
-      { name: 'Storage', value: '50 GB' },
-      { name: 'Support', value: 'Priority' },
-    ],
-  },
-];
-
-export function PricingPage() {
-  return (
-    <PricingTableTwo 
-      plans={plans}
-      onSelectPlan={(planId, billingInterval) => {
-        console.log(`Selected: ${planId}, Interval: ${billingInterval}`);
-      }}
-    />
-  );
-}
-```
-
-### Subscription Management
-
-Allow users to view and manage their subscription.
-
-**Installation:**
-```bash
-npx @billingsdk/cli add subscription-management
-```
-
-**Usage:**
-```tsx
-import { SubscriptionManagement } from "@/components/billingsdk/subscription-management";
-
-export function AccountPage() {
-  const subscription = {
-    plan: 'Pro',
-    status: 'active',
-    currentPeriodEnd: '2025-02-21',
-    amount: 49,
-    interval: 'month',
-  };
-
-  return (
-    <SubscriptionManagement 
-      subscription={subscription}
-      onManageBilling={async () => {
-        // Open customer portal
-        const response = await fetch('/api/portal', { method: 'POST' });
-        const { url } = await response.json();
-        window.location.href = url;
-      }}
-      onCancelSubscription={async () => {
-        if (confirm('Are you sure you want to cancel?')) {
-          await fetch('/api/subscription/cancel', { method: 'POST' });
-        }
-      }}
-    />
-  );
-}
-```
-
-### Usage Meter
-
-Display usage-based billing metrics.
-
-**Installation:**
-```bash
-npx @billingsdk/cli add usage-meter-circle
-```
-
-**Usage:**
-```tsx
-import { UsageMeterCircle } from "@/components/billingsdk/usage-meter-circle";
-
-export function UsageDashboard() {
-  return (
-    <div className="grid grid-cols-3 gap-4">
-      <UsageMeterCircle 
-        label="API Calls"
-        current={8500}
-        limit={10000}
-        unit="calls"
-      />
-      <UsageMeterCircle 
-        label="Storage"
-        current={3.2}
-        limit={5}
-        unit="GB"
-      />
-      <UsageMeterCircle 
-        label="Bandwidth"
-        current={45}
-        limit={100}
-        unit="GB"
-      />
-    </div>
-  );
-}
-```
-
----
-
-## Next.js Integration
-
-### Project Structure (after `init`)
-
-```
-your-project/
-├── app/
-│   ├── api/
-│   │   ├── checkout/
-│   │   │   └── route.ts
-│   │   ├── portal/
-│   │   │   └── route.ts
-│   │   └── webhooks/
-│   │       └── dodo/
-│   │           └── route.ts
-│   └── pricing/
-│       └── page.tsx
-├── components/
-│   └── billingsdk/
-│       ├── pricing-table-one.tsx
-│       └── subscription-management.tsx
-├── lib/
-│   ├── dodo.ts
-│   └── billingsdk-config.ts
-└── .env.local
-```
-
-### Generated API Routes
-
-**Checkout Route (`app/api/checkout/route.ts`):**
 ```typescript
-import { NextRequest, NextResponse } from 'next/server';
-import { dodo } from '@/lib/dodo';
+// lib/plan-products.server.ts
+import 'server-only';
+import type { PlanId } from './plans';
 
-export async function POST(req: NextRequest) {
-  const { productId, email } = await req.json();
-
-  const session = await dodo.checkoutSessions.create({
-    product_cart: [{ product_id: productId, quantity: 1 }],
-    customer: { email },
-    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/success`,
-  });
-
-  return NextResponse.json({ checkoutUrl: session.checkout_url });
-}
-```
-
-**Portal Route (`app/api/portal/route.ts`):**
-```typescript
-import { NextRequest, NextResponse } from 'next/server';
-import { dodo } from '@/lib/dodo';
-import { getSession } from '@/lib/auth';
-
-export async function POST(req: NextRequest) {
-  const session = await getSession();
-  
-  const portal = await dodo.customers.createPortalSession({
-    customer_id: session.user.customerId,
-    return_url: `${process.env.NEXT_PUBLIC_APP_URL}/account`,
-  });
-
-  return NextResponse.json({ url: portal.url });
-}
-```
-
-### Configuration File
-
-**`lib/billingsdk-config.ts`:**
-```typescript
-export const plans = [
-  {
-    id: process.env.NEXT_PUBLIC_PLAN_FREE_ID!,
-    name: 'Free',
-    description: 'Perfect for trying out',
-    price: 0,
-    interval: 'month' as const,
-    features: [
-      '5 projects',
-      '1 GB storage',
-      'Community support',
-    ],
-  },
-  {
-    id: process.env.NEXT_PUBLIC_PLAN_PRO_ID!,
-    name: 'Pro',
-    description: 'For professionals',
-    price: 29,
-    interval: 'month' as const,
-    popular: true,
-    features: [
-      'Unlimited projects',
-      '50 GB storage',
-      'Priority support',
-      'API access',
-    ],
-  },
-];
-
-export const config = {
-  returnUrl: process.env.NEXT_PUBLIC_APP_URL + '/success',
-  portalReturnUrl: process.env.NEXT_PUBLIC_APP_URL + '/account',
+const PRODUCT_IDS: Record<PlanId, string> = {
+  starter: 'pdt_starter_monthly',
+  pro: 'pdt_pro_monthly',
 };
+
+export function productIdForPlan(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  return PRODUCT_IDS[value as PlanId] ?? null;
+}
 ```
 
----
+### 3. Checkout route
 
-## Customization
+```typescript
+// app/api/checkout/route.ts
+import { NextResponse } from 'next/server';
+import { dodo } from '@/lib/dodopayments';
+import { productIdForPlan } from '@/lib/plan-products.server';
+import { getCurrentUser } from '@/lib/auth';
 
-### Styling with Tailwind
+export async function POST(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  }
 
-Components use Tailwind CSS and shadcn/ui patterns. Customize via:
+  const body: unknown = await request.json();
+  const planId = (body as { planId?: unknown }).planId;
+  const productId = productIdForPlan(planId);
 
-1. **Theme variables** in `globals.css`
-2. **Direct class overrides** on components
-3. **Component source modification** (files are local)
+  if (!productId) {
+    return NextResponse.json({ error: 'Unknown plan' }, { status: 400 });
+  }
 
-**Example - Custom colors:**
-```css
-/* globals.css */
-@layer base {
-  :root {
-    --primary: 220 90% 56%;
-    --primary-foreground: 0 0% 100%;
+  try {
+    const session = await dodo.checkoutSessions.create({
+      product_cart: [{ product_id: productId, quantity: 1 }],
+      customer: { email: user.email, name: user.name },
+      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/billing/return`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/pricing`,
+      metadata: { app_user_id: user.id },
+    });
+
+    if (!session.checkout_url) {
+      return NextResponse.json({ error: 'No checkout URL returned' }, { status: 502 });
+    }
+
+    return NextResponse.json({ checkoutUrl: session.checkout_url });
+  } catch (error) {
+    console.error('Checkout session creation failed', error);
+    return NextResponse.json({ error: 'Could not start checkout' }, { status: 500 });
   }
 }
 ```
 
-### Component Props
+`checkout_url` is nullable — it is absent when the session is created with `payment_method_id` — so guard
+it rather than redirecting to `undefined`. Checkout URLs are single-use and normally expire after 24 hours.
 
-Most components accept standard styling props:
+Use `checkoutSessions.create`. `payments.create` and `subscriptions.create` are deprecated for new
+integrations. Checkout parameters are covered in depth in the `checkout-integration` skill.
+
+### 4. Client component
 
 ```tsx
-<PricingTableOne 
-  plans={plans}
-  onSelectPlan={handleSelect}
-  className="max-w-4xl mx-auto"
-  containerClassName="gap-8"
-  cardClassName="border-2"
-/>
+// components/pricing-plans.tsx
+'use client';
+
+import { useState } from 'react';
+import { PricingTableOne } from '@/components/billingsdk/pricing-table-one';
+import { PLANS } from '@/lib/plans';
+
+export function PricingPlans() {
+  const [error, setError] = useState<string | null>(null);
+
+  async function handlePlanSelect(planId: string) {
+    setError(null);
+    try {
+      const response = await fetch('/api/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planId }),
+      });
+
+      if (!response.ok) {
+        setError('Could not start checkout. Please try again.');
+        return;
+      }
+
+      const { checkoutUrl } = (await response.json()) as { checkoutUrl: string };
+      window.location.href = checkoutUrl;
+    } catch {
+      setError('Network error. Please try again.');
+    }
+  }
+
+  return (
+    <>
+      <PricingTableOne
+        plans={PLANS}
+        title="Choose your plan"
+        description="Select the plan that works best for you"
+        onPlanSelect={handlePlanSelect}
+        theme="classic"
+        size="medium"
+      />
+      {error ? <p role="alert">{error}</p> : null}
+    </>
+  );
+}
 ```
 
----
+Render `<PricingPlans />` from `app/pricing/page.tsx`. Nothing secret crosses into the client component:
+it sends a plan slug and receives a URL.
 
-## Environment Variables
+## Subscription management and customer portal
+
+Install the block, then read its props from the generated file:
 
 ```bash
-# .env.local
+npx @billingsdk/cli add subscription-management
+```
 
-# Dodo Payments
-DODO_PAYMENTS_API_KEY=sk_live_xxxxx
-DODO_PAYMENTS_WEBHOOK_SECRET=whsec_xxxxx
+The portal route. The method is `customers.customerPortal.create(customerID, { ...params })` and the
+session's URL field is `link`.
 
-# Product IDs (from dashboard)
-NEXT_PUBLIC_PLAN_FREE_ID=prod_xxxxx
-NEXT_PUBLIC_PLAN_PRO_ID=prod_xxxxx
-NEXT_PUBLIC_PLAN_ENTERPRISE_ID=prod_xxxxx
+```typescript
+// app/api/portal/route.ts
+import { NextResponse } from 'next/server';
+import { dodo } from '@/lib/dodopayments';
+import { getCurrentUser } from '@/lib/auth';
 
-# App
+export async function POST() {
+  const user = await getCurrentUser();
+  if (!user?.dodoCustomerId) {
+    return NextResponse.json({ error: 'No billing account' }, { status: 400 });
+  }
+
+  try {
+    const session = await dodo.customers.customerPortal.create(user.dodoCustomerId, {
+      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/account`,
+    });
+
+    return NextResponse.json({ url: session.link });
+  } catch (error) {
+    console.error('Customer portal session failed', error);
+    return NextResponse.json({ error: 'Could not open billing portal' }, { status: 500 });
+  }
+}
+```
+
+Portal links expire after 24 hours, so mint one per click instead of caching it. In the portal a customer
+can view and cancel subscriptions, change plans within enabled product collections, update payment
+methods, download invoices, and retrieve license keys.
+
+Client side:
+
+```tsx
+// components/manage-billing-button.tsx
+'use client';
+
+import { useState } from 'react';
+
+export function ManageBillingButton() {
+  const [pending, setPending] = useState(false);
+
+  async function openPortal() {
+    setPending(true);
+    try {
+      const response = await fetch('/api/portal', { method: 'POST' });
+      if (!response.ok) {
+        setPending(false);
+        return;
+      }
+      const { url } = (await response.json()) as { url: string };
+      window.location.href = url;
+    } catch {
+      setPending(false);
+    }
+  }
+
+  return (
+    <button type="button" onClick={openPortal} disabled={pending}>
+      {pending ? 'Opening…' : 'Manage billing'}
+    </button>
+  );
+}
+```
+
+Wire `openPortal` to whichever callback prop your installed `subscription-management.tsx` exposes, or
+render the standalone button next to it. Load the subscription itself in the server component that hosts
+the page — `await dodo.subscriptions.retrieve(user.dodoSubscriptionId)` — and pass plain data down.
+
+## Usage and credit display
+
+Install a meter block:
+
+```bash
+npx @billingsdk/cli add usage-meter-linear
+```
+
+Fetch the numbers server-side. Credit balances come from `creditEntitlements.balances.retrieve`:
+
+```typescript
+// app/api/usage/credits/route.ts
+import { NextResponse } from 'next/server';
+import { dodo } from '@/lib/dodopayments';
+import { getCurrentUser } from '@/lib/auth';
+
+const CREDIT_ENTITLEMENT_ID = process.env.DODO_CREDIT_ENTITLEMENT_ID;
+
+export async function GET() {
+  const user = await getCurrentUser();
+  if (!user?.dodoCustomerId || !CREDIT_ENTITLEMENT_ID) {
+    return NextResponse.json({ error: 'No billing account' }, { status: 400 });
+  }
+
+  try {
+    const balance = await dodo.creditEntitlements.balances.retrieve(user.dodoCustomerId, {
+      credit_entitlement_id: CREDIT_ENTITLEMENT_ID,
+    });
+
+    return NextResponse.json({ balance: balance.balance, overage: balance.overage });
+  } catch (error) {
+    console.error('Credit balance lookup failed', error);
+    return NextResponse.json({ error: 'Could not read balance' }, { status: 500 });
+  }
+}
+```
+
+Pass the result into the meter block using the prop names in your installed
+`components/billingsdk/usage-meter-linear.tsx`. Related blocks for the same surface: `usage-meter-circle`,
+`usage-table`, `detailed-usage-table`, `upcoming-charges`, `invoice-history`.
+
+Credit balances are eventually consistent — meter-to-credit deduction runs on a background worker roughly
+once a minute — so the displayed balance is informational. Do not gate a request on it. Metering, credit
+entitlements, and ledger entries are covered in the `usage-based-billing` and `credit-based-billing` skills.
+
+## Theming and customization
+
+Components are Tailwind CSS plus shadcn/ui conventions, so there are three layers:
+
+1. **Theme tokens.** Override the shadcn CSS variables in `globals.css`; every block inherits them.
+
+   ```css
+   @layer base {
+     :root {
+       --primary: 220 90% 56%;
+       --primary-foreground: 0 0% 100%;
+     }
+   }
+   ```
+
+2. **Component props.** `pricing-table-one` accepts `theme` (`"classic"` in the official example) and
+   `size` (`"medium"`). Check the installed file for the full union types.
+
+3. **Source edits.** The files are yours. Editing them is the supported path for structural changes, at
+   the cost of manual reconciliation when you re-run `add`.
+
+The hosted Dodo checkout page is themed separately, through `customization.theme_config` on the checkout
+session — not by these components.
+
+## Framework support
+
+The components are **not** framework-agnostic. They require React or Next.js plus Tailwind CSS and
+shadcn/ui conventions.
+
+The CLI additionally ships server integration templates for Next.js, Express, Hono, Fastify, and React.
+That covers the route-handler side only. Caution: Dodo's integration page and BillingSDK's own
+introduction have disagreed about which server templates are shipping versus "coming soon" — confirm the
+adapter you want with the current CLI before committing to it.
+
+For non-React front ends, call Dodo through a framework adapter (`@dodopayments/nextjs`,
+`@dodopayments/express`, `@dodopayments/sveltekit`, and others) and build your own UI.
+
+## Environment variables
+
+```bash
+# .env.local — server-side only, never prefixed with NEXT_PUBLIC_
+DODO_PAYMENTS_API_KEY=dodo_test_xxxxxxxxxxxxxxxx
+DODO_PAYMENTS_ENVIRONMENT=test_mode
+DODO_PAYMENTS_WEBHOOK_KEY=xxxxxxxxxxxxxxxx
+DODO_CREDIT_ENTITLEMENT_ID=cde_xxxxxxxxxxxxxxxx
+
+# Safe to expose
 NEXT_PUBLIC_APP_URL=https://yoursite.com
 ```
 
----
+Switch to `dodo_live_...` and `DODO_PAYMENTS_ENVIRONMENT=live_mode` together. A live key against
+`test_mode` fails, and a test key against `live_mode` fails.
 
-## Best Practices
+## Common mistakes
 
-### 1. Use Product IDs from Environment
-Keep product IDs in environment variables for easy staging/production switching.
+**Exposing the API key to the browser.** `NEXT_PUBLIC_DODO_PAYMENTS_API_KEY` inlines the secret into the
+JS bundle for anyone to read. There is no publishable key in Dodo Payments — every key is secret. Import
+`lib/dodopayments.ts` only from route handlers and server components.
 
-### 2. Handle Loading States
-Components should show loading states during checkout:
+**Calling `customers.createPortalSession`.** That method does not exist. Use
+`client.customers.customerPortal.create(customerID, { ...params })` and read `.link`, not `.url`.
 
-```tsx
-const [loading, setLoading] = useState(false);
+**Trusting client-rendered plan state.** The selected plan in React state, or the fact that the user
+returned to `return_url`, does not mean the subscription is active. Grant entitlements only from
+webhook-confirmed subscription events persisted in your database, then render UI from that. Webhook
+signature verification is covered in the `webhook-integration` skill.
 
-const handleSelect = async (planId: string) => {
-  setLoading(true);
-  try {
-    const response = await fetch('/api/checkout', {...});
-    const { checkoutUrl } = await response.json();
-    window.location.href = checkoutUrl;
-  } finally {
-    setLoading(false);
-  }
-};
-```
+**Accepting a raw `product_id` from the request body.** A caller can then check out against any product in
+your catalogue, including internal or discounted ones. Map an opaque plan slug to a `pdt_` id server-side.
 
-### 3. Server-Side Data Fetching
-Fetch subscription data server-side when possible:
+**Hardcoding prices in the client.** `PLANS[].price` is display text. When you change a price in the Dodo
+dashboard, the checkout charges the new amount while the pricing page keeps advertising the old one.
+Reconcile `lib/plans.ts` with the dashboard as part of any pricing change.
 
-```tsx
-// app/account/page.tsx
-import { getSubscription } from '@/lib/subscription';
+**`npm install billingsdk`.** The root repository package is private. Install through
+`@billingsdk/cli` or the shadcn registry instead.
 
-export default async function AccountPage() {
-  const subscription = await getSubscription();
-  
-  return <SubscriptionManagement subscription={subscription} />;
-}
-```
+**Guessing prop names.** `pricing-table-one` is the only block with a published prop example. Open the
+generated file under `components/billingsdk/` and read the exported props type before wiring anything else.
 
-### 4. Implement Webhooks
-Always use webhooks as source of truth for subscription status, not client-side data.
+**Using `DODO_PAYMENTS_WEBHOOK_SECRET`.** The SDK reads `DODO_PAYMENTS_WEBHOOK_KEY` for the `webhookKey`
+option.
 
----
+**Gating requests on the displayed credit balance.** Deduction is asynchronous, so the reported balance
+lags. Dodo explicitly warns against using it as strict per-request authorization.
+
+**Using `payments.create` or `subscriptions.create` for a purchase.** Both are deprecated. Use
+`checkoutSessions.create`.
 
 ## Resources
 
-- [BillingSDK Documentation](https://billingsdk.com/docs)
-- [Dodo Payments Integration](https://docs.dodopayments.com/developer-resources/billingsdk)
-- [Component Gallery](https://billingsdk.com/docs/components)
-- [GitHub Repository](https://github.com/dodopayments/billingsdk)
+- [BillingSDK on Dodo docs](https://docs.dodopayments.com/developer-resources/billingsdk)
+- [BillingSDK quick start](https://billingsdk.com/docs/quick-start)
+- [Component catalogue](https://billingsdk.com/docs/components)
+- [`registry.json` — installability source of truth](https://github.com/dodopayments/billingsdk/blob/main/registry.json)
+- [Checkout Sessions guide](https://docs.dodopayments.com/developer-resources/checkout-session)
+- [Customer Portal](https://docs.dodopayments.com/features/customer-portal)
+- [Credit-based billing](https://docs.dodopayments.com/features/credit-based-billing)

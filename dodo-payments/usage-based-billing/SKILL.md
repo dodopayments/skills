@@ -1,6 +1,6 @@
 ---
 name: usage-based-billing
-description: Guide for implementing usage-based billing with Dodo Payments - meters, events, pricing per unit, and metered subscriptions.
+description: Guide for charging directly per measured API call, token, storage unit, or other consumption using meters, stable usage events, aggregation, free thresholds, and metered subscriptions.
 ---
 
 # Dodo Payments Usage-Based Billing
@@ -11,20 +11,21 @@ Charge customers for what they actually use—API calls, storage, AI tokens, or 
 
 ---
 
-## Overview
+## When to use this skill
 
-Usage-based billing is perfect for:
-- **APIs**: Charge per request or operation
-- **AI Services**: Bill per token, generation, or inference
-- **Infrastructure**: Charge for compute, storage, bandwidth
-- **SaaS**: Metered features alongside subscriptions
+- You need to bill customers based on consumption (API calls, tokens, storage, bandwidth).
+- You want to combine usage charges with subscriptions or one-time purchases.
+- You need to track and aggregate events into billable quantities.
+- You're building an AI service, SaaS platform, or infrastructure product with metered features.
 
 ---
 
 ## Core Concepts
 
 ### Events
-Usage actions sent from your application:
+
+Usage records sent from your application to Dodo. Each event is attributed to a customer and matched to a meter by its `event_name`.
+
 ```json
 {
   "event_id": "evt_unique_123",
@@ -36,129 +37,159 @@ Usage actions sent from your application:
 ```
 
 ### Meters
-Aggregate events into billable quantities:
-| Aggregation | Use Case | Example |
-|-------------|----------|---------|
+
+Filters and aggregates events into billable quantities. A meter specifies:
+- **Event name**: which events to match (case-sensitive)
+- **Aggregation type**: how to combine events (count, sum, max, last)
+- **Measurement unit**: the billing unit (calls, tokens, GB, etc.)
+- **Optional filters**: conditions events must meet to be counted
+
+### Aggregation Types
+
+| Type | Use Case | Example |
+|------|----------|---------|
 | **Count** | Total events | API calls, image generations |
-| **Sum** | Add values | Tokens used, bytes transferred |
-| **Max** | Highest value | Peak concurrent users |
-| **Last** | Most recent | Current storage used |
+| **Sum** | Add values from a property | Tokens used, bytes transferred |
+| **Max** | Highest value in a period | Peak concurrent users |
+| **Last** | Most recent value | Current storage used |
 
-### Products with Usage Pricing
-- Price per unit (e.g., $0.001 per API call)
-- Free threshold (e.g., 1,000 free calls)
-- Automatic billing each cycle
+For `sum`, `max`, and `last`, you specify which metadata property to aggregate.
 
-**Billing Example**: 2,500 calls - 1,000 free = 1,500 × $0.02 = $30.00
+### Pricing
+
+Attach a meter to a product price to charge per unit:
+- **Price per unit**: e.g., $0.001 per API call
+- **Free threshold**: e.g., 1,000 free calls per month
+- **Charge formula**: `(usage − threshold) × price_per_unit`
+
+**Example**: 2,500 calls − 1,000 free = 1,500 × $0.02 = $30.00
 
 ---
 
-## Quick Start
+## Meter Lifecycle
 
-### 1. Create a Meter
-
-In Dashboard → Meters → Create Meter:
-
-1. **Name**: "API Requests"
-2. **Event Name**: `api.call` (exact match, case-sensitive)
-3. **Aggregation**: Count
-4. **Unit**: "calls"
-
-### 2. Create Usage-Based Product
-
-In Dashboard → Products → Create Product:
-
-1. Select **Usage-Based** type
-2. Connect your meter
-3. Set pricing:
-   - **Price Per Unit**: $0.001
-   - **Free Threshold**: 1000
-
-### 3. Send Events
+### Create a Meter
 
 ```typescript
 import DodoPayments from 'dodopayments';
 
 const client = new DodoPayments({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  environment: 'test_mode',
 });
 
-await client.usageEvents.ingest({
-  events: [{
-    event_id: `api_${Date.now()}_${Math.random()}`,
-    customer_id: 'cus_abc123',
-    event_name: 'api.call',
-    timestamp: new Date().toISOString(),
-    metadata: {
-      endpoint: '/v1/users',
-      method: 'GET',
-    }
-  }]
+const meter = await client.meters.create({
+  name: 'API Requests',
+  event_name: 'api.call',
+  aggregation: { type: 'count' },
+  measurement_unit: 'calls',
+  description: 'Track API calls per customer',
 });
+
+console.log(meter.id); // mtr_...
+```
+
+For a sum aggregation, specify the property to aggregate:
+
+```typescript
+const meter = await client.meters.create({
+  name: 'Token Usage',
+  event_name: 'ai.tokens',
+  aggregation: { type: 'sum', key: 'tokens' },
+  measurement_unit: 'tokens',
+});
+```
+
+### List and Retrieve Meters
+
+```typescript
+// List all meters
+const meters = await client.meters.list();
+
+// Retrieve a specific meter
+const meter = await client.meters.retrieve('mtr_abc123');
+```
+
+### Archive and Unarchive
+
+Meters are archived, not deleted. Archived meters stop accepting new events but retain historical data.
+
+```typescript
+// Archive a meter
+await client.meters.archive('mtr_abc123');
+
+// Unarchive to resume
+await client.meters.unarchive('mtr_abc123');
 ```
 
 ---
 
-## Implementation Examples
+## Event Ingestion
 
-### TypeScript/Node.js
+### Send Events
 
 ```typescript
-import DodoPayments from 'dodopayments';
-
-const client = new DodoPayments({
-  bearerToken: process.env.DODO_PAYMENTS_API_KEY!,
-});
-
-// Track single event
-async function trackUsage(
+async function recordApiCall(
   customerId: string,
-  eventName: string,
-  metadata: Record<string, string>
-) {
-  await client.usageEvents.ingest({
+  requestId: string,
+  occurredAt: string,
+): Promise<number> {
+  const response = await client.usageEvents.ingest({
     events: [{
-      event_id: `${eventName}_${Date.now()}_${crypto.randomUUID()}`,
+      event_id: `api-call:${requestId}`,
       customer_id: customerId,
-      event_name: eventName,
-      timestamp: new Date().toISOString(),
-      metadata,
-    }]
+      event_name: 'api.call',
+      timestamp: occurredAt,
+      metadata: {
+        endpoint: '/v1/users',
+        method: 'GET',
+      },
+    }],
   });
+
+  return response.ingested_count;
 }
-
-// Track API call
-await trackUsage('cus_abc123', 'api.call', {
-  endpoint: '/v1/generate',
-  method: 'POST',
-});
-
-// Track token usage (for Sum aggregation)
-await trackUsage('cus_abc123', 'token.usage', {
-  tokens: '1500',
-  model: 'gpt-4',
-});
 ```
 
-### Batch Event Ingestion
+`requestId` must identify the underlying API operation and remain unchanged across retries. Do not generate it inside the ingestion attempt.
 
-Send multiple events efficiently (max 1000 per request):
+### Event Schema
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `event_id` | Yes | Unique identifier for idempotency. Duplicate IDs in the same request reject the entire request. |
+| `customer_id` | Yes | Dodo Payments customer ID. |
+| `event_name` | Yes | Must match a meter's event name exactly (case-sensitive). |
+| `timestamp` | No | ISO-8601 datetime. Defaults to current UTC time. Must be within one hour in the past or five minutes in the future. |
+| `metadata` | No | Object with string, integer, number, or boolean values. Max 50 pairs; key length 100, value length 500. No nested objects or arrays. |
+
+### Idempotency and Deduplication
+
+- Each distinct operation gets one globally unique `event_id`.
+- Derive the ID from an immutable request, job, generation, or snapshot ID and reuse it on every retry.
+- Duplicate IDs in a single request reject the entire batch.
+- An ID already ingested in an earlier request is silently ignored, making retries safe.
+
+### Batch Ingestion
+
+Send up to 1,000 events per request:
 
 ```typescript
 async function trackBatchUsage(
   events: Array<{
+    operationId: string;
     customerId: string;
     eventName: string;
+    occurredAt: string;
     metadata: Record<string, string>;
-    timestamp?: string;
   }>
 ) {
-  const formattedEvents = events.map((e, i) => ({
-    event_id: `batch_${Date.now()}_${i}_${crypto.randomUUID()}`,
-    customer_id: e.customerId,
-    event_name: e.eventName,
-    timestamp: e.timestamp || new Date().toISOString(),
-    metadata: e.metadata,
+  const formattedEvents = events.map((event) => ({
+    event_id: `usage:${event.operationId}`,
+    customer_id: event.customerId,
+    event_name: event.eventName,
+    timestamp: event.occurredAt,
+    metadata: event.metadata,
   }));
 
   await client.usageEvents.ingest({ events: formattedEvents });
@@ -166,250 +197,140 @@ async function trackBatchUsage(
 
 // Batch track multiple API calls
 await trackBatchUsage([
-  { customerId: 'cus_abc', eventName: 'api.call', metadata: { endpoint: '/v1/users' } },
-  { customerId: 'cus_abc', eventName: 'api.call', metadata: { endpoint: '/v1/orders' } },
-  { customerId: 'cus_xyz', eventName: 'api.call', metadata: { endpoint: '/v1/products' } },
+  { operationId: 'req_101', customerId: 'cus_abc', eventName: 'api.call', occurredAt: '2026-08-01T10:00:00Z', metadata: { endpoint: '/v1/users' } },
+  { operationId: 'req_102', customerId: 'cus_abc', eventName: 'api.call', occurredAt: '2026-08-01T10:00:01Z', metadata: { endpoint: '/v1/orders' } },
+  { operationId: 'req_103', customerId: 'cus_xyz', eventName: 'api.call', occurredAt: '2026-08-01T10:00:02Z', metadata: { endpoint: '/v1/products' } },
 ]);
 ```
 
-### Python
+### Query Events
 
-```python
-from dodopayments import DodoPayments
-import uuid
-from datetime import datetime
+```typescript
+// List events for a customer
+const events = await client.usageEvents.list({
+  customer_id: 'cus_abc123',
+});
 
-client = DodoPayments(bearer_token=os.environ["DODO_PAYMENTS_API_KEY"])
-
-def track_usage(customer_id: str, event_name: str, metadata: dict):
-    client.usage_events.ingest(events=[{
-        "event_id": f"{event_name}_{datetime.now().timestamp()}_{uuid.uuid4()}",
-        "customer_id": customer_id,
-        "event_name": event_name,
-        "timestamp": datetime.now().isoformat(),
-        "metadata": metadata
-    }])
-
-# Track AI token usage
-track_usage("cus_abc123", "ai.tokens", {
-    "tokens": "2500",
-    "model": "claude-3",
-    "operation": "completion"
-})
-
-# Track image generation
-track_usage("cus_abc123", "image.generated", {
-    "size": "1024x1024",
-    "model": "dall-e-3"
-})
+// Retrieve a specific event
+const event = await client.usageEvents.retrieve('evt_abc123');
 ```
 
-### Go
+---
 
-```go
-package main
+## Pricing Models
 
-import (
-    "context"
-    "fmt"
-    "os"
-    "time"
+### Per-Unit Pricing
 
-    "github.com/dodopayments/dodopayments-go"
-    "github.com/google/uuid"
-)
+The only currently documented and operable pricing model. A meter attachment uses:
+- `price_per_unit`: decimal string (max 5 integer digits, 12 decimal places)
+- `free_threshold`: optional integer (usage below this is not charged)
 
-func main() {
-    client := dodopayments.NewClient(
-        option.WithBearerToken(os.Getenv("DODO_PAYMENTS_API_KEY")),
-    )
+Charge formula: `(usage − threshold) × price_per_unit`
 
-    ctx := context.Background()
+The `product-catalog-management` skill is the canonical source for the complete product creation request. It defines the singular `price` object with `type: 'usage_based_price'` and its nested `meters` array; do not define a parallel product schema here.
 
-    _, err := client.UsageEvents.Ingest(ctx, &dodopayments.UsageEventIngestParams{
-        Events: []dodopayments.UsageEvent{{
-            EventID:    fmt.Sprintf("api_%d_%s", time.Now().Unix(), uuid.New().String()),
-            CustomerID: "cus_abc123",
-            EventName:  "api.call",
-            Timestamp:  time.Now().Format(time.RFC3339),
-            Metadata: map[string]string{
-                "endpoint": "/v1/users",
-                "method":   "GET",
-            },
-        }},
-    })
+**Note:** Tiered, graduated, volume, and staircase pricing models are not currently documented in the Dodo Payments API. Use per-unit pricing with free thresholds for now.
 
-    if err != nil {
-        panic(err)
-    }
+---
+
+## Instrumenting Your Application
+
+### Track API Calls
+
+Persist the event before reporting the operation as complete, then ingest it from a retrying worker. The outbox or queue implementation must durably store the payload before `persist` resolves.
+
+```typescript
+type PersistedUsageEvent = {
+  event_id: string;
+  customer_id: string;
+  event_name: string;
+  timestamp: string;
+  metadata: Record<string, string | number | boolean>;
+};
+
+interface UsageOutbox {
+  persist(event: PersistedUsageEvent): Promise<void>;
+  nextBatch(limit: number): Promise<PersistedUsageEvent[]>;
+  markIngested(eventIds: string[]): Promise<void>;
+}
+
+async function completeApiOperation(
+  outbox: UsageOutbox,
+  operationId: string,
+  customerId: string,
+  occurredAt: string,
+): Promise<void> {
+  await outbox.persist({
+    event_id: `api-call:${operationId}`,
+    customer_id: customerId,
+    event_name: 'api.call',
+    timestamp: occurredAt,
+    metadata: { endpoint: '/v1/users', method: 'GET', status: 200 },
+  });
+}
+
+async function ingestUsageOutbox(outbox: UsageOutbox): Promise<void> {
+  const events = await outbox.nextBatch(1000);
+  if (events.length === 0) return;
+
+  await client.usageEvents.ingest({ events });
+  await outbox.markIngested(events.map((event) => event.event_id));
 }
 ```
 
----
+If the worker crashes after Dodo accepts the batch but before `markIngested`, retry the same persisted events with the same IDs. Dodo ignores the already-ingested IDs.
 
-## Meter Configuration
-
-### Aggregation Types
-
-#### Count (API Calls, Requests)
-```
-Meter: API Requests
-Event Name: api.call
-Aggregation: Count
-Unit: calls
-```
-
-#### Sum (Tokens, Bytes)
-```
-Meter: Token Usage
-Event Name: token.usage
-Aggregation: Sum
-Over Property: tokens
-Unit: tokens
-```
-
-Events must include the property in metadata:
-```typescript
-await client.usageEvents.ingest({
-  events: [{
-    event_id: 'token_123',
-    customer_id: 'cus_abc',
-    event_name: 'token.usage',
-    metadata: { tokens: '1500' } // This value gets summed
-  }]
-});
-```
-
-#### Max (Peak Concurrent Users)
-```
-Meter: Peak Users
-Event Name: concurrent.users
-Aggregation: Max
-Over Property: count
-Unit: users
-```
-
-#### Last (Current Storage)
-```
-Meter: Storage Used
-Event Name: storage.snapshot
-Aggregation: Last
-Over Property: bytes
-Unit: GB
-```
-
-### Event Filtering
-
-Filter which events count toward the meter:
-
-```
-Filter Logic: AND
-Conditions:
-  - Property: tier, Equals: "premium"
-  - Property: status, Equals: "success"
-```
-
-Only events matching ALL conditions are counted.
-
----
-
-## Common Use Cases
-
-### AI Token Billing
+### Track AI Token Usage
 
 ```typescript
-// Meter: AI Tokens (Sum aggregation over "tokens" property)
-
-async function trackAIUsage(
+async function callAI(
   customerId: string,
-  promptTokens: number,
-  completionTokens: number,
-  model: string
+  generationId: string,
+  prompt: string,
+  completedAt: string,
 ) {
-  const totalTokens = promptTokens + completionTokens;
+  const response = await openai.chat.completions.create({
+    model: 'gpt-4',
+    messages: [{ role: 'user', content: prompt }],
+  });
 
+  // Track tokens after completion
   await client.usageEvents.ingest({
     events: [{
-      event_id: `ai_${Date.now()}_${crypto.randomUUID()}`,
+      event_id: `generation:${generationId}`,
       customer_id: customerId,
       event_name: 'ai.tokens',
-      timestamp: new Date().toISOString(),
+      timestamp: completedAt,
       metadata: {
-        tokens: totalTokens.toString(),
-        prompt_tokens: promptTokens.toString(),
-        completion_tokens: completionTokens.toString(),
-        model,
+        tokens: response.usage.total_tokens.toString(),
+        prompt_tokens: response.usage.prompt_tokens.toString(),
+        completion_tokens: response.usage.completion_tokens.toString(),
+        model: 'gpt-4',
       }
     }]
   });
-}
 
-// After AI completion
-await trackAIUsage('cus_abc', 500, 1200, 'gpt-4');
+  return response;
+}
 ```
 
-### Image Generation
+### Track Storage Usage
+
+For snapshot-based metrics (current state), use the `last` aggregation:
 
 ```typescript
-// Meter: Images Generated (Count aggregation)
-
-async function trackImageGeneration(
+async function updateStorageUsage(
   customerId: string,
-  imageSize: string,
-  model: string
+  snapshotId: string,
+  bytesUsed: number,
+  capturedAt: string,
 ) {
   await client.usageEvents.ingest({
     events: [{
-      event_id: `img_${Date.now()}_${crypto.randomUUID()}`,
-      customer_id: customerId,
-      event_name: 'image.generated',
-      timestamp: new Date().toISOString(),
-      metadata: {
-        size: imageSize,
-        model,
-      }
-    }]
-  });
-}
-```
-
-### API Rate Tracking
-
-```typescript
-// Middleware for Express/Next.js
-
-async function trackAPIUsage(
-  req: Request,
-  customerId: string
-) {
-  await client.usageEvents.ingest({
-    events: [{
-      event_id: `api_${Date.now()}_${crypto.randomUUID()}`,
-      customer_id: customerId,
-      event_name: 'api.call',
-      timestamp: new Date().toISOString(),
-      metadata: {
-        endpoint: req.url,
-        method: req.method,
-        user_agent: req.headers['user-agent'] || 'unknown',
-      }
-    }]
-  });
-}
-```
-
-### Storage Billing
-
-```typescript
-// Meter: Storage (Last aggregation - snapshot of current usage)
-
-async function updateStorageUsage(customerId: string, bytesUsed: number) {
-  await client.usageEvents.ingest({
-    events: [{
-      event_id: `storage_${Date.now()}_${customerId}`,
+      event_id: `storage-snapshot:${snapshotId}`,
       customer_id: customerId,
       event_name: 'storage.snapshot',
-      timestamp: new Date().toISOString(),
+      timestamp: capturedAt,
       metadata: {
         bytes: bytesUsed.toString(),
         gb: (bytesUsed / 1024 / 1024 / 1024).toFixed(2),
@@ -419,253 +340,191 @@ async function updateStorageUsage(customerId: string, bytesUsed: number) {
 }
 
 // Call periodically or after storage changes
-await updateStorageUsage('cus_abc', 5368709120); // 5GB
+await updateStorageUsage(
+  'cus_abc',
+  'snapshot_01K1M4D2K9',
+  5368709120,
+  '2026-08-01T10:30:00Z',
+); // 5GB
 ```
 
 ---
 
-## Next.js Integration
+## Querying Usage for Display
 
-### API Route for Usage Tracking
-
-```typescript
-// app/api/track-usage/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import DodoPayments from 'dodopayments';
-
-const client = new DodoPayments({
-  bearerToken: process.env.DODO_PAYMENTS_API_KEY!,
-});
-
-export async function POST(req: NextRequest) {
-  const { customerId, eventName, metadata } = await req.json();
-
-  try {
-    await client.usageEvents.ingest({
-      events: [{
-        event_id: `${eventName}_${Date.now()}_${crypto.randomUUID()}`,
-        customer_id: customerId,
-        event_name: eventName,
-        timestamp: new Date().toISOString(),
-        metadata,
-      }]
-    });
-
-    return NextResponse.json({ success: true });
-  } catch (error: any) {
-    return NextResponse.json(
-      { error: error.message },
-      { status: 500 }
-    );
-  }
-}
-```
-
-### Usage Tracking Hook
+### Retrieve Usage History
 
 ```typescript
-// hooks/useUsageTracking.ts
-import { useCallback } from 'react';
+const usage = await client.subscriptions.retrieveUsageHistory(
+  'sub_abc123',
+  { page_size: 100 }
+);
 
-export function useUsageTracking(customerId: string) {
-  const trackUsage = useCallback(async (
-    eventName: string,
-    metadata: Record<string, string>
-  ) => {
-    await fetch('/api/track-usage', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ customerId, eventName, metadata }),
-    });
-  }, [customerId]);
-
-  return { trackUsage };
-}
-
-// Usage in component
-function AIChat() {
-  const { trackUsage } = useUsageTracking('cus_abc123');
-
-  const handleGenerate = async () => {
-    const result = await generateAIResponse(prompt);
-    
-    // Track token usage
-    await trackUsage('ai.tokens', {
-      tokens: result.totalTokens.toString(),
-      model: 'gpt-4',
-    });
-  };
-}
+console.log(usage.items); // Array of billing-period usage records
 ```
+
+This returns aggregated usage per meter for the subscription's current billing period.
 
 ---
 
-## Hybrid Billing
+## Credit-Based Billing Integration
 
-Combine usage-based with subscriptions:
+Usage events can deduct from a customer's credit balance instead of charging per-unit. See the `credit-based-billing` skill for full details on credit entitlements, balances, and ledger management.
 
-### Subscription + Usage Overage
+To link a meter to credits:
 
-```typescript
-// 1. Customer subscribes to plan with included usage
-// Product: Pro Plan - $49/month + $0.01/call after 10,000 free
+1. Create a credit entitlement (e.g., "AI Credits").
+2. Attach the credit entitlement to the same product.
+3. On the meter, enable **Bill usage in Credits**.
+4. Set `credit_entitlement_id` and `meter_units_per_credit` (e.g., 1,000 tokens = 1 credit).
 
-// 2. Track all usage events
-await trackUsage('cus_abc', 'api.call', { endpoint: '/v1/generate' });
+Usage under the free threshold is excluded. Approximately every minute, a background worker aggregates new usage, converts it using the meter-to-credit ratio, and consumes the oldest non-expired credit grants (FIFO). When credits run out, configured overage behavior applies.
 
-// 3. Dodo automatically:
-//    - Applies free threshold (10,000 calls)
-//    - Charges overage at $0.01/call
-//    - Combines with subscription fee
-```
+---
 
-### Multiple Meters per Product
+## Webhook Integration
 
-Attach up to 10 meters to a single product:
+Usage events trigger webhooks for monitoring and reconciliation. See the `webhook-integration` skill for webhook setup and verification.
 
-```
-Product: AI Platform
-├── Meter: API Calls ($0.001/call, 1000 free)
-├── Meter: Token Usage ($0.01/1000 tokens)
-├── Meter: Image Generations ($0.05/image, 10 free)
-└── Meter: Storage ($0.10/GB)
-```
+---
 
-### Credit-Based Meter Billing
+## Common Mistakes
 
-Link meters to credit entitlements so usage events deduct from a customer's credit balance instead of charging per-unit:
+### 1. Using Unstable or Reused Event IDs
 
-1. Create a credit entitlement (Dashboard → Products → Credits)
-2. Create a usage-based product with a meter
-3. On the meter, toggle **Bill usage in Credits**
-4. Select the credit entitlement and set **Meter units per credit**
+Generate one ID from the immutable business operation. Reusing an ID for a different operation drops usage, while generating a timestamp or random ID on every retry can bill the same operation twice.
 
 ```typescript
-// Meter: AI Tokens (Sum aggregation over "tokens")
-// Credit: "AI Credits" with 10,000 credits/cycle
-// Meter units per credit: 1000 (1,000 tokens = 1 credit)
-
-// Usage events deduct credits automatically
+// WRONG — a retry creates a new billable event
 await client.usageEvents.ingest({
   events: [{
-    event_id: `ai_${Date.now()}_${crypto.randomUUID()}`,
-    customer_id: 'cus_abc123',
-    event_name: 'ai.tokens',
-    timestamp: new Date().toISOString(),
-    metadata: { tokens: '1500', model: 'gpt-4' }
+    event_id: `api-call:${Date.now()}:${crypto.randomUUID()}`,
+    customer_id: 'cus_abc',
+    event_name: 'api.call',
+  }],
+});
+
+// CORRECT — retry request req_123 with this same ID
+await client.usageEvents.ingest({
+  events: [{
+    event_id: 'api-call:req_123',
+    customer_id: 'cus_abc',
+    event_name: 'api.call',
+  }],
+});
+```
+
+Do not reuse `api-call:req_123` for a distinct request. This matches credit ledger guidance: a timeout is not permission to generate a fresh idempotency key.
+
+### 2. Using Fire-and-Forget Ingestion
+
+Do not start ingestion after responding without first persisting the event. The process can crash after the user receives success but before usage reaches Dodo.
+
+```typescript
+// WRONG — an acknowledged operation can lose its usage event
+app.post('/api/generate', async (req, res) => {
+  const result = await generateAI(req.body);
+  res.json(result);
+  void client.usageEvents.ingest({ events: [result.usageEvent] });
+});
+
+// CORRECT — durable persistence completes before success is returned
+app.post('/api/generate', async (req, res) => {
+  const result = await generateAI(req.body);
+  await usageOutbox.persist(result.usageEvent);
+  res.json(result);
+});
+```
+
+A retrying worker ingests the persisted payload with its original `event_id`, as shown in **Track API Calls**. If persistence fails, return an error so the operation can be retried rather than silently underbilling.
+
+### 3. Clock Skew in Timestamps
+
+Timestamps must be within one hour in the past or five minutes in the future. Ensure your server clock is synchronized.
+
+```typescript
+// WRONG — timestamp is 2 hours old
+const oldTime = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+await client.usageEvents.ingest({
+  events: [{
+    event_id: 'evt_123',
+    customer_id: 'cus_abc',
+    event_name: 'api.call',
+    timestamp: oldTime, // Rejected
+    metadata: {}
   }]
 });
 
-// Check remaining credit balance
-const balance = await client.creditEntitlements.balances.get(
-  'cent_ai_credits',
-  'cus_abc123'
-);
-console.log(`Credits remaining: ${balance.available_balance}`);
+// CORRECT — use current time
+await client.usageEvents.ingest({
+  events: [{
+    event_id: 'evt_123',
+    customer_id: 'cus_abc',
+    event_name: 'api.call',
+    timestamp: new Date().toISOString(),
+    metadata: {}
+  }]
+});
 ```
 
-Credit deduction runs via a background worker every minute using FIFO ordering (oldest grants consumed first). When credits run out:
-- **Overage disabled**: Usage is blocked
-- **Overage enabled**: Usage continues and overage is tracked per your configured behavior (forgive, bill, or carry deficit)
----
+### 4. Ingesting on the Client Side
 
-## Best Practices
+Never send events from client-side code. Always ingest from your backend to avoid exposing your API key.
 
-### 1. Unique Event IDs
-Always generate unique IDs for idempotency:
 ```typescript
-const eventId = `${eventName}_${Date.now()}_${crypto.randomUUID()}`;
+// WRONG — client-side
+const trackUsage = async (eventName: string) => {
+  await fetch('https://test.dodopayments.com/events/ingest', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${process.env.DODO_PAYMENTS_API_KEY}`, // Exposed!
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ events: [...] })
+  });
+};
+
+// CORRECT — send the event from a backend worker using its persisted payload
+await client.usageEvents.ingest({
+  events: [{
+    event_id: 'api-call:req_123',
+    customer_id: 'cus_abc',
+    event_name: 'api.call',
+    timestamp: '2026-08-01T10:30:00Z',
+    metadata: { endpoint: '/v1/users' },
+  }],
+});
 ```
 
-### 2. Batch Events
-For high-volume, batch events (max 1000/request):
+### 5. Mismatched Event Names
+
+Event names are case-sensitive and must match the meter's event name exactly.
+
 ```typescript
-// Queue events and send in batches
-const eventQueue: Event[] = [];
+// WRONG — meter expects "api.call", event sends "API.CALL"
+const meter = await client.meters.create({
+  name: 'API Requests',
+  event_name: 'api.call',
+  aggregation: { type: 'count' },
+  measurement_unit: 'calls',
+});
 
-function queueEvent(event: Event) {
-  eventQueue.push(event);
-  if (eventQueue.length >= 100) {
-    flushEvents();
-  }
-}
+await client.usageEvents.ingest({
+  events: [{
+    event_id: 'api-call:req_123',
+    customer_id: 'cus_abc',
+    event_name: 'API.CALL', // Won't match
+  }]
+});
 
-async function flushEvents() {
-  if (eventQueue.length === 0) return;
-  const batch = eventQueue.splice(0, 1000);
-  await client.usageEvents.ingest({ events: batch });
-}
-
-// Flush periodically
-setInterval(flushEvents, 5000);
-```
-
-### 3. Handle Failures Gracefully
-Implement retry logic for event ingestion:
-```typescript
-async function trackWithRetry(event: Event, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      await client.usageEvents.ingest({ events: [event] });
-      return;
-    } catch (error) {
-      if (i === retries - 1) throw error;
-      await sleep(1000 * Math.pow(2, i)); // Exponential backoff
-    }
-  }
-}
-```
-
-### 4. Include Relevant Metadata
-Add context for debugging and filtering:
-```typescript
-metadata: {
-  endpoint: '/v1/generate',
-  method: 'POST',
-  model: 'gpt-4',
-  user_id: 'internal_user_123',
-  request_id: requestId,
-}
-```
-
-### 5. Monitor in Dashboard
-Check Meters dashboard for:
-- Event volume and trends
-- Usage per customer
-- Aggregated quantities
-
----
-
-## Pricing Examples
-
-### API Service
-```
-Meter: API Calls (Count)
-Price: $0.001 per call
-Free Threshold: 1,000 calls/month
-
-Customer uses 15,000 calls:
-(15,000 - 1,000) × $0.001 = $14.00
-```
-
-### AI Token Service
-```
-Meter: Tokens (Sum over "tokens")
-Price: $0.00001 per token ($0.01 per 1,000)
-Free Threshold: 10,000 tokens
-
-Customer uses 50,000 tokens:
-(50,000 - 10,000) × $0.00001 = $0.40
-```
-
-### Image Generation
-```
-Meter: Images (Count)
-Price: $0.05 per image
-Free Threshold: 10 images
-
-Customer generates 100 images:
-(100 - 10) × $0.05 = $4.50
+// CORRECT
+await client.usageEvents.ingest({
+  events: [{
+    event_id: 'api-call:req_123',
+    customer_id: 'cus_abc',
+    event_name: 'api.call', // Matches exactly
+  }]
+});
 ```
 
 ---
@@ -674,7 +533,8 @@ Customer generates 100 images:
 
 - [Usage-Based Billing Guide](https://docs.dodopayments.com/features/usage-based-billing/introduction)
 - [Meters Documentation](https://docs.dodopayments.com/features/usage-based-billing/meters)
-- [Event Ingestion](https://docs.dodopayments.com/features/usage-based-billing/event-ingestion)
-- [AI Chat App Tutorial](https://docs.dodopayments.com/developer-resources/build-an-ai-chat-app-with-usage-based-billing)
-- [Hybrid Billing Models](https://docs.dodopayments.com/features/hybrid-billing)
+- [Event Ingestion API](https://docs.dodopayments.com/api-reference/usage-events/ingest-events)
+- [Create Meter API](https://docs.dodopayments.com/api-reference/meters/create-meter)
+- [Usage-Based Billing Integration Guide](https://docs.dodopayments.com/developer-resources/usage-based-billing-guide)
 - [Credit-Based Billing](https://docs.dodopayments.com/features/credit-based-billing)
+- [Webhook Integration](https://docs.dodopayments.com/developer-resources/webhooks)

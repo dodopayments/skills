@@ -1,43 +1,65 @@
 ---
 name: dodo-best-practices
-description: Comprehensive guide for integrating Dodo Payments - the all-in-one payment and billing platform for SaaS and AI products.
+description: Guide for initial Dodo Payments setup, including SDK installation, test and live environments, API keys, and the canonical checkout-to-webhook architecture.
 ---
 
 # Dodo Payments Integration Guide
 
-**Always consult [docs.dodopayments.com](https://docs.dodopayments.com) for the latest API reference and code examples.**
+This skill covers the foundational concepts and setup for Dodo Payments. Use it when starting a new integration, setting up the SDK, or understanding the core payment flow.
 
-Dodo Payments is the all-in-one engine to launch, scale, and monetize worldwide. Designed for SaaS and AI products, it handles payments, billing, subscriptions, and distribution without extra engineering.
+## When to use this skill
+
+- You're building a new payment integration and need to understand Dodo's architecture
+- You need to install and initialize the SDK in your language
+- You want to understand the canonical payment flow and webhook verification
+- You're choosing between framework adapters or payment methods
+- You need to know what Dodo handles versus what you must build
 
 ---
 
-## Quick Reference
+## What is Dodo Payments
+
+Dodo Payments is a Merchant of Record (MoR). That means Dodo is the legal seller on every transaction, handles sales tax registration and calculation across all jurisdictions, remits taxes to authorities, and manages card-network disputes and chargebacks. As a developer, you don't build a sales-tax engine or dispute-handling system. You create checkout sessions, listen to webhooks, and grant access when payment succeeds.
+
+---
+
+## Environment Setup
+
+### Base URLs
+
+Only two real base URLs exist:
+
+- **Live**: `https://live.dodopayments.com`
+- **Test**: `https://test.dodopayments.com`
+
+Never use `api.dodopayments.com` — it has no DNS record and cannot be reached.
+
+### API Keys
+
+Keys have two formats:
+
+- **Test**: `dodo_test_...`
+- **Live**: `dodo_live_...`
 
 ### Environment Variables
-- `DODO_PAYMENTS_API_KEY` - Your API key from the dashboard
-- `DODO_PAYMENTS_WEBHOOK_SECRET` - Webhook signing secret for verification
 
-### API Environments
-- **Live Mode**: `https://api.dodopayments.com` (default)
-- **Test Mode**: `https://api.dodopayments.com` with `environment: 'test_mode'`
+```bash
+DODO_PAYMENTS_API_KEY       # Bearer token for API requests
+DODO_PAYMENTS_WEBHOOK_KEY   # Secret for webhook signature verification
+```
 
-### Dashboard URLs
-- **Main Dashboard**: [app.dodopayments.com](https://app.dodopayments.com)
-- **API Keys**: Dashboard → Developer → API
-- **Webhooks**: Dashboard → Developer → Webhooks
-- **Products**: Dashboard → Products
+### Default Environment
+
+The `environment` parameter defaults to `live_mode` if omitted. Always pass `test_mode` explicitly during development.
 
 ---
 
-## SDK Installation
+## SDK Installation & Initialization
 
-### TypeScript/JavaScript
+### TypeScript/Node.js
+
 ```bash
 npm install dodopayments
-# or
-yarn add dodopayments
-# or
-pnpm add dodopayments
 ```
 
 ```typescript
@@ -45,271 +67,405 @@ import DodoPayments from 'dodopayments';
 
 const client = new DodoPayments({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-  environment: 'live_mode', // or 'test_mode'
+  environment: 'test_mode', // defaults to 'live_mode'
 });
 ```
 
+Constructor options:
+
+| Option | Type | Default | Notes |
+|---|---|---|---|
+| `bearerToken` | string | env `DODO_PAYMENTS_API_KEY` | Required for API calls |
+| `environment` | `'test_mode' \| 'live_mode'` | `'live_mode'` | Explicit in dev |
+| `webhookKey` | string | env `DODO_PAYMENTS_WEBHOOK_KEY` | For `webhooks.unwrap()` |
+| `baseURL` | string | — | Override; mutually exclusive with `environment` |
+
 ### Python
+
 ```bash
 pip install dodopayments
 ```
 
 ```python
+import os
 from dodopayments import DodoPayments
 
-client = DodoPayments(bearer_token=os.environ["DODO_PAYMENTS_API_KEY"])
+client = DodoPayments(
+    bearer_token=os.environ.get("DODO_PAYMENTS_API_KEY"),
+    environment="test_mode",  # defaults to "live_mode"
+)
 ```
 
 ### Go
+
 ```bash
-go get github.com/dodopayments/dodopayments-go
+go get -u github.com/dodopayments/dodopayments-go@v1.110.0
 ```
 
 ```go
-import "github.com/dodopayments/dodopayments-go"
+import (
+    "os"
+
+    "github.com/dodopayments/dodopayments-go"
+    "github.com/dodopayments/dodopayments-go/option"
+)
 
 client := dodopayments.NewClient(
     option.WithBearerToken(os.Getenv("DODO_PAYMENTS_API_KEY")),
+    option.WithEnvironmentTestMode(), // defaults to live
 )
 ```
 
 ### PHP
+
 ```bash
-composer require dodopayments/client
+composer require "dodopayments/client:6.19.0"
 ```
 
 ```php
 use Dodopayments\Client;
 
-$client = new Client(bearerToken: getenv('DODO_PAYMENTS_API_KEY'));
+$client = new Client(
+    bearerToken: getenv('DODO_PAYMENTS_API_KEY') ?: 'My Bearer Token',
+    environment: 'test_mode',
+);
 ```
+
+### Ruby
+
+```bash
+gem "dodopayments", "~> 2.22.0"
+```
+
+```ruby
+dodo_payments = Dodopayments::Client.new(
+    bearer_token: ENV["DODO_PAYMENTS_API_KEY"],
+    environment: "test_mode"
+)
+```
+
+### Java
+
+```xml
+<dependency>
+    <groupId>com.dodopayments.api</groupId>
+    <artifactId>dodo-payments-java</artifactId>
+    <version>1.110.0</version>
+</dependency>
+```
+
+```java
+DodoPaymentsClient client = DodoPaymentsOkHttpClient.fromEnv();
+// Reads DODO_PAYMENTS_API_KEY, DODO_PAYMENTS_WEBHOOK_KEY, DODO_PAYMENTS_BASE_URL
+```
+
+### Kotlin
+
+```xml
+<dependency>
+    <groupId>com.dodopayments.api</groupId>
+    <artifactId>dodo-payments-kotlin</artifactId>
+    <version>1.110.0</version>
+</dependency>
+```
+
+```kotlin
+val client: DodoPaymentsClient = DodoPaymentsOkHttpClient.fromEnv()
+```
+
+---
+
+## Framework Adapters
+
+Dodo publishes framework-specific packages under `@dodopayments/*`. Use the one matching your stack:
+
+| Framework | Package | Use if |
+|---|---|---|
+| Next.js | `@dodopayments/nextjs` | Building with Next.js App Router |
+| Nuxt | `@dodopayments/nuxt` | Building with Nuxt 3+ |
+| Express | `@dodopayments/express` | Using Express.js |
+| Fastify | `@dodopayments/fastify` | Using Fastify |
+| Hono | `@dodopayments/hono` | Using Hono (Edge/Node) |
+| Astro | `@dodopayments/astro` | Using Astro endpoints |
+| SvelteKit | `@dodopayments/sveltekit` | Using SvelteKit server routes |
+| Remix | `@dodopayments/remix` | Using Remix loaders/actions |
+| TanStack Start | `@dodopayments/tanstack` | Using TanStack Start |
+| Better Auth | `@dodopayments/better-auth` | Integrating with Better Auth |
+| Convex | `@dodopayments/convex` | Using Convex backend |
+| Bun | `@dodopayments/bun` | Using Bun.serve() |
+
+Each adapter provides checkout, customer portal, and webhook handlers tailored to the framework's conventions.
 
 ---
 
 ## Core Concepts
 
 ### Products
-Products are the items you sell. Create them in the dashboard or via API:
-- **One-time**: Single purchase products
-- **Subscription**: Recurring billing products
-- **Usage-based**: Metered billing per consumption
 
-### Credit Entitlements
-Credits are virtual balances (API calls, tokens, compute hours) attached to products. Create them in Dashboard → Products → Credits:
-- **Custom Unit**: Your own metric with configurable precision
-- **Fiat Credits**: Real currency value (USD, EUR, etc.)
-- Attach up to 3 credits per product
-- Configure rollover, overage, and expiration per entitlement
+Items you sell. Create in the dashboard or via API. Types:
+
+- **One-time**: Single purchase
+- **Subscription**: Recurring billing
+- **Usage-based**: Metered consumption
+
+### Customers
+
+Represent buyers. Can have multiple payment methods, subscriptions, and credit balances. Create explicitly or implicitly during checkout.
+
 ### Checkout Sessions
-The primary way to collect payments. Create a checkout session and redirect customers:
 
-```typescript
-const session = await client.checkoutSessions.create({
-  product_cart: [
-    { product_id: 'prod_xxxxx', quantity: 1 }
-  ],
-  customer: {
-    email: 'customer@example.com',
-    name: 'John Doe',
-  },
-  return_url: 'https://yoursite.com/success',
-});
+The primary payment collection method. Create a session server-side, redirect the customer to the hosted checkout URL, and listen for webhooks to confirm payment.
 
-// Redirect customer to: session.checkout_url
-```
+See the `checkout-integration` skill for detailed checkout configuration and the `subscription-integration` skill for recurring lifecycle management.
+
+### Subscriptions
+
+Recurring charges on a schedule. Managed through checkout sessions or the subscriptions API. See the `subscription-integration` skill for lifecycle, trials, plan changes, and on-demand charging.
 
 ### Webhooks
-Listen to events for real-time updates:
-- `payment.succeeded` - Payment completed
-- `payment.failed` - Payment failed
-- `subscription.active` - Subscription activated
-- `subscription.cancelled` - Subscription cancelled
-- `refund.succeeded` - Refund processed
-- `dispute.opened` - Dispute received
-- `license_key.created` - License key generated
-- `credit.added` - Credits granted to customer
-- `credit.deducted` - Credits consumed
-- `credit.balance_low` - Credit balance below threshold
+
+Real-time event notifications. Dodo sends events like `payment.succeeded`, `subscription.active`, `refund.succeeded`, and `credit.deducted`. Webhook signature verification is covered in the `webhook-integration` skill.
+
+### Credit Entitlements
+
+Virtual balances (API calls, tokens, compute hours) attached to products. Configured per product with rollover, overage, and expiration rules. See the `credit-based-billing` skill.
+
 ---
 
-## Common Integration Patterns
+## The Canonical Payment Flow
 
-### One-Time Payment Flow
+1. **Create checkout session** on your server with product ID and customer email.
+2. **Redirect customer** to the `checkout_url` returned.
+3. **Customer pays** on the hosted checkout.
+4. **Dodo sends webhook** (e.g., `payment.succeeded`) to your endpoint.
+5. **Verify the webhook signature** using `client.webhooks.unwrap()`.
+6. **Grant access** only after webhook verification succeeds.
 
-1. Create product in dashboard
-2. Create checkout session with product ID
-3. Redirect customer to checkout URL
-4. Handle `payment.succeeded` webhook
-5. Fulfill order / grant access
+Never grant access based on the browser `return_url` redirect alone. The webhook is the authoritative confirmation.
 
 ```typescript
-// Create checkout for one-time payment
+import express from 'express';
+
+const app = express();
+
+// 1. Create session
 const session = await client.checkoutSessions.create({
-  product_cart: [{ product_id: 'prod_one_time_product', quantity: 1 }],
+  product_cart: [{ product_id: 'pdt_example', quantity: 1 }],
   customer: { email: 'customer@example.com' },
   return_url: 'https://yoursite.com/success',
 });
-```
 
-### Subscription Flow
+// 2. Redirect to session.checkout_url
 
-1. Create subscription product in dashboard
-2. Create checkout session
-3. Handle `subscription.active` webhook to grant access
-4. Handle `subscription.cancelled` to revoke access
+// 3. Listen for webhook with the exact raw request bytes
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    // 4. Verify signature
+    const webhookId = req.headers['webhook-id'] as string;
+    const event = client.webhooks.unwrap(req.body.toString(), {
+      headers: {
+        'webhook-id': webhookId,
+        'webhook-signature': req.headers['webhook-signature'] as string,
+        'webhook-timestamp': req.headers['webhook-timestamp'] as string,
+      },
+    });
 
-```typescript
-// Create checkout for subscription
-const session = await client.checkoutSessions.create({
-  product_cart: [{ product_id: 'prod_monthly_subscription', quantity: 1 }],
-  subscription_data: { trial_period_days: 14 }, // Optional trial
-  customer: { email: 'customer@example.com' },
-  return_url: 'https://yoursite.com/success',
+    // 5. Suppress duplicates with an atomic unique insert and run side effects
+    // in the same database transaction.
+    const handled = await processWebhookOnce(webhookId, async () => {
+      if (event.type === 'payment.succeeded') {
+        // ONE-TIME purchases only. Subscription access starts on subscription.active.
+        const payment = event.data;
+        await grantOneTimeAccess(payment.customer.customer_id);
+      }
+
+      if (event.type === 'subscription.active') {
+        await grantSubscriptionAccess(event.data);
+      }
+    });
+
+    res.json({ received: true, duplicate: !handled });
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid signature' });
+  }
 });
 ```
 
-### Webhook Verification
+---
 
-Always verify webhook signatures:
+## API Foundations
+
+### Authentication
+
+All requests use Bearer token authentication:
+
+```http
+Authorization: Bearer dodo_live_...
+```
+
+### Pagination
+
+List endpoints are page-numbered. They accept `page_size` and `page_number`, and the response
+exposes the rows on `items`:
 
 ```typescript
-import crypto from 'crypto';
+const payments = await client.payments.list({
+  page_size: 50,
+  page_number: 0,
+});
 
-function verifyWebhook(payload: string, signature: string, secret: string): boolean {
-  const expectedSignature = crypto
-    .createHmac('sha256', secret)
-    .update(payload)
-    .digest('hex');
-  
-  return crypto.timingSafeEqual(
-    Buffer.from(signature),
-    Buffer.from(expectedSignature)
-  );
+for (const payment of payments.items) {
+  console.log(payment.payment_id);
 }
 ```
 
----
-
-## API Key Management
-
-### Generation
-1. Navigate to Dashboard → Developer → API
-2. Click "Create API Key"
-3. Copy and securely store the key
-
-### Security Best Practices
-- Never expose API keys in client-side code
-- Use environment variables
-- Rotate keys periodically
-- Use test mode keys for development
-
----
-
-## Customer Portal
-
-Allow customers to manage their subscriptions:
+The SDK can also walk every page for you:
 
 ```typescript
-const portal = await client.customers.createPortalSession({
-  customer_id: 'cust_xxxxx',
-  return_url: 'https://yoursite.com/account',
-});
-
-// Redirect to: portal.url
+for await (const payment of client.payments.list()) {
+  console.log(payment.payment_id);
+}
 ```
 
----
+### Rate Limits
 
-## Error Handling
+Dodo enforces rate limits. The SDK automatically retries `429` responses as described below.
 
-Handle API errors gracefully:
+### SDK Error Classes
+
+The SDK throws typed errors. Catch and inspect:
 
 ```typescript
 try {
-  const session = await client.checkoutSessions.create({...});
+  await client.checkoutSessions.create({...});
 } catch (error) {
-  if (error.status === 400) {
-    // Invalid request - check parameters
-  } else if (error.status === 401) {
-    // Invalid API key
-  } else if (error.status === 429) {
-    // Rate limited - implement backoff
+  if (error instanceof DodoPayments.APIError) {
+    console.error(error.status, error.message);
   }
 }
 ```
 
----
+### Retries
 
-## Testing
+The SDK retries twice by default with a short exponential backoff on connection errors and `408`, `409`, `429`, and `5xx` responses. Do not add an unconditional custom retry loop.
 
-### Test Mode
-- Use test API keys (start with `sk_test_`)
-- Test webhooks with dashboard tools
-- Use test card numbers:
-  - `4242 4242 4242 4242` - Success
-  - `4000 0000 0000 0002` - Decline
-
-### Local Development
-Use ngrok or similar for webhook testing:
-```bash
-ngrok http 3000
-```
-Then configure the ngrok URL as your webhook endpoint in the dashboard.
-
----
-
-## Framework Integration
-
-### Next.js
-Use API routes for server-side operations:
+Override the default for all requests when constructing the client:
 
 ```typescript
-// app/api/checkout/route.ts
-import { NextResponse } from 'next/server';
-import DodoPayments from 'dodopayments';
-
-const client = new DodoPayments({
-  bearerToken: process.env.DODO_PAYMENTS_API_KEY!,
+const clientWithoutRetries = new DodoPayments({
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  environment: 'test_mode',
+  maxRetries: 0,
 });
-
-export async function POST(req: Request) {
-  const { productId, email } = await req.json();
-  
-  const session = await client.checkoutSessions.create({
-    product_cart: [{ product_id: productId, quantity: 1 }],
-    customer: { email },
-    return_url: `${process.env.NEXT_PUBLIC_URL}/success`,
-  });
-
-  return NextResponse.json({ url: session.checkout_url });
-}
 ```
 
-### Express.js
+Or override it for one request:
+
 ```typescript
-import express from 'express';
-import DodoPayments from 'dodopayments';
+await client.checkoutSessions.create(
+  {
+    product_cart: [{ product_id: 'pdt_example', quantity: 1 }],
+    customer: { email: 'customer@example.com' },
+  },
+  { maxRetries: 0 },
+);
+```
 
-const app = express();
-const client = new DodoPayments({ bearerToken: process.env.DODO_PAYMENTS_API_KEY! });
+---
 
-app.post('/create-checkout', async (req, res) => {
-  const session = await client.checkoutSessions.create({
-    product_cart: [{ product_id: req.body.productId, quantity: 1 }],
-    customer: { email: req.body.email },
-    return_url: 'https://yoursite.com/success',
-  });
-  res.json({ url: session.checkout_url });
+## Webhook Verification
+
+Webhook signature verification is mandatory. Never trust the payload without verification.
+
+Dodo implements the Standard Webhooks spec. The signed message is `webhook-id.webhook-timestamp.raw_body` (period-joined), HMAC-SHA256, base64-encoded.
+
+**Use the SDK helper:**
+
+```typescript
+const event = client.webhooks.unwrap(req.body.toString(), {
+  headers: {
+    'webhook-id': req.headers['webhook-id'] as string,
+    'webhook-signature': req.headers['webhook-signature'] as string,
+    'webhook-timestamp': req.headers['webhook-timestamp'] as string,
+  },
 });
 ```
+
+The `unwrap()` method verifies the signature and parses the payload. If verification fails, it throws an error.
+
+For detailed webhook setup, event types, and testing, see the `webhook-integration` skill.
+
+---
+
+## Common Mistakes
+
+### 1. Granting access on `return_url` redirect
+
+The browser redirect is not proof of payment. Always wait for the webhook.
+
+```typescript
+// WRONG
+app.get('/success', (req, res) => {
+  grantAccess(req.query.customer_id); // No verification!
+});
+
+// CORRECT
+app.post('/webhook', async (req, res) => {
+  const event = client.webhooks.unwrap(...);
+  if (event.type === 'payment.succeeded') {
+    grantAccess(event.data.customer.customer_id);
+  }
+});
+```
+
+### 2. Hand-rolling webhook verification
+
+Don't implement HMAC verification yourself. Use `client.webhooks.unwrap()`.
+
+The old approach of signing just the payload is wrong because Standard Webhooks signs `webhook-id.webhook-timestamp.raw_body`. Hand-rolled HMAC will never match.
+
+### 3. Re-serializing the request body
+
+Webhook verification requires the exact raw body. If you parse JSON and re-stringify it, the signature breaks.
+
+```typescript
+// WRONG
+const body = JSON.parse(req.body);
+const event = client.webhooks.unwrap(JSON.stringify(body), {...});
+
+// CORRECT
+const event = client.webhooks.unwrap(req.body.toString(), {...});
+```
+
+### 4. Using deprecated APIs
+
+Don't use `client.payments.create()` or `client.subscriptions.create()` for new integrations. Both are deprecated. Use `client.checkoutSessions.create()`.
+
+### 5. Forgetting to set `environment: 'test_mode'`
+
+The default is `live_mode`. Always pass `test_mode` explicitly during development to avoid charging real cards.
+
+### 6. Storing API keys in code
+
+Never hardcode keys. Always use environment variables.
+
+### 7. Ignoring the `webhook-timestamp` header
+
+The timestamp prevents replay attacks. `client.webhooks.unwrap()` validates it automatically, but if you hand-roll verification, check that the timestamp is recent (within a few minutes).
+
+### 8. Using `unsafeUnwrap()` in production
+
+`unsafeUnwrap()` skips signature verification. Use it only for unsigned test payloads from `dodo wh trigger`. Never use it for production webhooks.
 
 ---
 
 ## Resources
 
-- [Documentation](https://docs.dodopayments.com)
+- [Dodo Payments Docs](https://docs.dodopayments.com)
 - [API Reference](https://docs.dodopayments.com/api-reference/introduction)
 - [SDK Repositories](https://github.com/dodopayments)
-- [Discord Community](https://discord.gg/bYqAp4ayYh)
-- [Support](mailto:support@dodopayments.com)
+- [Checkout Sessions Guide](https://docs.dodopayments.com/developer-resources/checkout-session)
+- [Webhook Guide](https://docs.dodopayments.com/developer-resources/webhooks)
+- [Customer Portal](https://docs.dodopayments.com/features/customer-portal)
+- [Subscription Integration](https://docs.dodopayments.com/developer-resources/subscription-integration-guide)
 - [Credit-Based Billing](https://docs.dodopayments.com/features/credit-based-billing)

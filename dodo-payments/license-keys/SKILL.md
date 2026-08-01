@@ -5,71 +5,45 @@ description: Guide for implementing license key management with Dodo Payments - 
 
 # Dodo Payments License Keys
 
-**Reference: [docs.dodopayments.com/features/license-keys](https://docs.dodopayments.com/features/license-keys)**
-
 License keys authorize access to your digital products. Use them for software licensing, per-seat controls, and gating premium features.
 
----
+## When to use this skill
 
-## Overview
+- Implementing end-user license activation and validation flows
+- Building merchant dashboards to manage customer license keys
+- Handling license expiry, activation limits, and subscription-linked revocation
+- Integrating license checks into desktop apps, CLIs, or web services
+- Reacting to license lifecycle webhooks
 
-License keys are unique tokens that:
-- Authorize access to software, plugins, CLIs
-- Limit activations per user or device
-- Gate downloads, updates, or premium features
-- Can be linked to subscriptions or one-time purchases
+## Core concepts
 
----
+**License Key Entitlements** deliver keys when a product is purchased. The entitlement config supplies activation limits, optional duration, and fulfillment mode (auto or manual).
 
-## Creating License Keys
+**Three distinct resources:**
 
-### In Dashboard
+1. **`client.licenses.*`** — end-user activation flow (public, no API key required)
+   - `activate()` — activate a key on a device
+   - `validate()` — check if a key is valid
+   - `deactivate()` — free an activation slot
 
-1. Go to Dashboard → License Keys
-2. Click "Create License Key"
-3. Configure settings:
-   - **Expiry Date**: Duration or "no expiry" for perpetual
-   - **Activation Limit**: Max concurrent activations (1, 5, unlimited)
-   - **Activation Instructions**: Steps for customers
+2. **`client.licenseKeys.*`** — merchant-side key management (requires API key)
+   - `list()`, `retrieve()`, `create()`, `update()` — manage keys for your customers
 
-4. Save the license key configuration
+3. **`client.licenseKeyInstances.*`** — per-device activation instances (requires API key)
+   - `list()`, `retrieve()`, `update()` — track active devices per key
 
-### Auto-Generation on Purchase
+**Activation limits:** blank/null means unlimited; otherwise it's the maximum concurrent activations. Attempting to activate beyond the limit returns `422`.
 
-License keys can be automatically generated when a product is purchased:
-
-1. Configure your product with license key settings
-2. When purchased, a key is generated and emailed to customer
-3. `license_key.created` webhook is fired
-
----
-
-## API Reference
-
-### Public Endpoints (No API Key Required)
-
-These endpoints can be called directly from client applications:
-
-| Endpoint | Description |
-|----------|-------------|
-| `POST /licenses/activate` | Activate a license key |
-| `POST /licenses/deactivate` | Deactivate an instance |
-| `POST /licenses/validate` | Check if key is valid |
-
-### Authenticated Endpoints (API Key Required)
-
-| Endpoint | Description |
-|----------|-------------|
-| `GET /license_keys` | List all license keys |
-| `GET /license_keys/:id` | Get license key details |
-| `PATCH /license_keys/:id` | Update license key |
-| `GET /license_key_instances` | List activation instances |
+**Expiry semantics:**
+- One-time-payment keys honor the entitlement duration.
+- Subscription-issued keys have no independent expiry; validity follows subscription state. On hold disables them temporarily. An immediate cancellation disables them permanently, but when `cancel_at_next_billing_date` is set, keep them active until the subscription reaches the end of its term.
+- Imported keys use nullable `expires_at`; null means perpetual.
 
 ---
 
-## Implementation Examples
+## End-User Activation Flow
 
-### Activate a License Key
+### Activate a license key
 
 ```typescript
 import DodoPayments from 'dodopayments';
@@ -87,18 +61,21 @@ async function activateLicense(licenseKey: string, deviceName: string) {
     return {
       success: true,
       instanceId: response.id,
-      message: 'License activated successfully',
+      customerId: response.customer.customer_id,
+      productId: response.product.product_id,
     };
   } catch (error: any) {
-    return {
-      success: false,
-      message: error.message || 'Activation failed',
-    };
+    if (error.status === 422) {
+      return { success: false, error: 'Activation limit reached' };
+    }
+    return { success: false, error: error.message || 'Activation failed' };
   }
 }
 ```
 
-### Validate a License Key
+Response includes `id` (instance ID), `business_id`, `name`, `license_key_id`, `created_at`, customer details, and product details.
+
+### Validate a license key
 
 ```typescript
 import DodoPayments from 'dodopayments';
@@ -111,19 +88,16 @@ async function validateLicense(licenseKey: string) {
       license_key: licenseKey,
     });
 
-    return {
-      valid: response.valid,
-      activations: response.activations_count,
-      maxActivations: response.activations_limit,
-      expiresAt: response.expires_at,
-    };
+    return { valid: response.valid };
   } catch (error) {
     return { valid: false };
   }
 }
 ```
 
-### Deactivate a License
+Optional: pass `license_key_instance_id` to validate a specific instance.
+
+### Deactivate a license
 
 ```typescript
 import DodoPayments from 'dodopayments';
@@ -137,23 +111,120 @@ async function deactivateLicense(licenseKey: string, instanceId: string) {
       license_key_instance_id: instanceId,
     });
 
-    return { success: true, message: 'License deactivated' };
+    return { success: true };
   } catch (error: any) {
-    return { success: false, message: error.message };
+    return { success: false, error: error.message };
   }
 }
 ```
 
 ---
 
+## Merchant-Side Key Management
+
+### List customer license keys
+
+```typescript
+import DodoPayments from 'dodopayments';
+
+const client = new DodoPayments({
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  environment: 'test_mode',
+});
+
+async function listCustomerKeys(customerId: string) {
+  const keys = await client.licenseKeys.list({
+    customer_id: customerId,
+  });
+
+  return keys.items.map(key => ({
+    id: key.id,
+    key: key.key,
+    status: key.status,
+    expiresAt: key.expires_at,
+    activationsUsed: key.instances_count,
+    activationsLimit: key.activations_limit,
+  }));
+}
+```
+
+### Retrieve a single license key
+
+```typescript
+const key = await client.licenseKeys.retrieve('lk_abc123');
+
+console.log({
+  id: key.id,
+  key: key.key,
+  status: key.status,
+  expiresAt: key.expires_at,
+  activationsUsed: key.instances_count,
+  activationsLimit: key.activations_limit,
+});
+```
+
+### Update a license key
+
+```typescript
+// Disable a key or adjust its activation limit
+await client.licenseKeys.update('lk_abc123', {
+  disabled: true,
+  // or adjust activations_limit
+  activations_limit: 10,
+});
+```
+
+### Create a license key (manual issuance)
+
+```typescript
+const newKey = await client.licenseKeys.create({
+  customer_id: 'cus_abc123',
+  key: 'PREMIUM-AAAA-BBBB-CCCC',
+  product_id: 'pdt_abc123',
+  activations_limit: 5,
+  expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
+});
+
+console.log(newKey.key); // The actual license key string
+```
+
+---
+
+## List Activation Instances
+
+```typescript
+import DodoPayments from 'dodopayments';
+
+const client = new DodoPayments({
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  environment: 'test_mode',
+});
+
+// List all instances for a specific license key
+for await (const instance of client.licenseKeyInstances.list({
+  license_key_id: 'lk_abc123',
+})) {
+  console.log({
+    id: instance.id,
+    name: instance.name,
+    createdAt: instance.created_at,
+  });
+}
+```
+
+Optional query fields: `page_size` (default 10, max 100), `page_number` (default 0), `license_key_id`, and `grant_id`.
+
+---
+
 ## Desktop App Integration
 
-### Electron App Example
+### Electron app example
 
 ```typescript
 // main/license.ts
 import Store from 'electron-store';
 import DodoPayments from 'dodopayments';
+import os from 'os';
 
 const store = new Store();
 const client = new DodoPayments();
@@ -166,21 +237,19 @@ interface LicenseInfo {
 
 export async function activateLicense(licenseKey: string): Promise<boolean> {
   try {
-    // Get device identifier
     const deviceName = `${os.hostname()} - ${os.platform()}`;
-    
+
     const response = await client.licenses.activate({
       license_key: licenseKey,
       name: deviceName,
     });
 
-    // Store license info locally
     const licenseInfo: LicenseInfo = {
       key: licenseKey,
       instanceId: response.id,
       activatedAt: new Date().toISOString(),
     };
-    
+
     store.set('license', licenseInfo);
     return true;
   } catch (error) {
@@ -191,7 +260,7 @@ export async function activateLicense(licenseKey: string): Promise<boolean> {
 
 export async function checkLicense(): Promise<boolean> {
   const license = store.get('license') as LicenseInfo | undefined;
-  
+
   if (!license) {
     return false;
   }
@@ -203,10 +272,10 @@ export async function checkLicense(): Promise<boolean> {
 
     return response.valid;
   } catch (error) {
-    // If offline, trust local license (with optional grace period)
+    // If offline, trust local license with a grace period
     const activatedAt = new Date(license.activatedAt);
     const daysSinceActivation = (Date.now() - activatedAt.getTime()) / (1000 * 60 * 60 * 24);
-    
+
     // Allow 30-day offline grace period
     return daysSinceActivation < 30;
   }
@@ -214,7 +283,7 @@ export async function checkLicense(): Promise<boolean> {
 
 export async function deactivateLicense(): Promise<boolean> {
   const license = store.get('license') as LicenseInfo | undefined;
-  
+
   if (!license) {
     return true;
   }
@@ -234,7 +303,7 @@ export async function deactivateLicense(): Promise<boolean> {
 }
 ```
 
-### React Component for License Input
+### React component for license input
 
 ```tsx
 // components/LicenseActivation.tsx
@@ -254,9 +323,8 @@ export function LicenseActivation({ onActivated }: Props) {
     setError(null);
 
     try {
-      // Call main process (Electron IPC)
       const success = await window.electronAPI.activateLicense(licenseKey);
-      
+
       if (success) {
         onActivated();
       } else {
@@ -273,7 +341,7 @@ export function LicenseActivation({ onActivated }: Props) {
     <div className="license-form">
       <h2>Activate Your License</h2>
       <p>Enter your license key to unlock all features.</p>
-      
+
       <input
         type="text"
         value={licenseKey}
@@ -281,16 +349,12 @@ export function LicenseActivation({ onActivated }: Props) {
         placeholder="XXXX-XXXX-XXXX-XXXX"
         disabled={loading}
       />
-      
+
       {error && <p className="error">{error}</p>}
-      
+
       <button onClick={handleActivate} disabled={loading || !licenseKey}>
         {loading ? 'Activating...' : 'Activate License'}
       </button>
-      
-      <a href="https://yoursite.com/purchase" target="_blank">
-        Don't have a license? Purchase here
-      </a>
     </div>
   );
 }
@@ -300,7 +364,7 @@ export function LicenseActivation({ onActivated }: Props) {
 
 ## CLI Tool Integration
 
-### Node.js CLI Example
+### Node.js CLI example
 
 ```typescript
 // src/license.ts
@@ -308,7 +372,18 @@ import Conf from 'conf';
 import DodoPayments from 'dodopayments';
 import { machineIdSync } from 'node-machine-id';
 
-const config = new Conf({ projectName: 'your-cli' });
+interface StoredLicense {
+  key: string;
+  instanceId: string;
+  machineId: string;
+}
+
+interface CliStore {
+  license?: StoredLicense;
+}
+
+// Typing the store keeps `config.get('license')` strongly typed at every call site.
+const config = new Conf<CliStore>({ projectName: 'your-cli' });
 const client = new DodoPayments();
 
 export async function activate(licenseKey: string): Promise<void> {
@@ -329,9 +404,7 @@ export async function activate(licenseKey: string): Promise<void> {
 
     console.log('License activated successfully!');
   } catch (error: any) {
-    if (error.status === 400) {
-      console.error('Invalid license key.');
-    } else if (error.status === 403) {
+    if (error.status === 422) {
       console.error('Activation limit reached. Deactivate another device first.');
     } else {
       console.error('Activation failed:', error.message);
@@ -341,7 +414,7 @@ export async function activate(licenseKey: string): Promise<void> {
 }
 
 export async function checkLicense(): Promise<boolean> {
-  const license = config.get('license') as any;
+  const license = config.get('license');
 
   if (!license) {
     return false;
@@ -359,7 +432,7 @@ export async function checkLicense(): Promise<boolean> {
 }
 
 export async function deactivate(): Promise<void> {
-  const license = config.get('license') as any;
+  const license = config.get('license');
 
   if (!license) {
     console.log('No active license found.');
@@ -379,7 +452,6 @@ export async function deactivate(): Promise<void> {
   }
 }
 
-// Middleware to check license before commands
 export function requireLicense() {
   return async () => {
     const valid = await checkLicense();
@@ -392,7 +464,7 @@ export function requireLicense() {
 }
 ```
 
-### CLI Commands
+### CLI commands
 
 ```typescript
 // src/cli.ts
@@ -419,7 +491,6 @@ program
     console.log(valid ? 'License: Active' : 'License: Not activated');
   });
 
-// Protected command example
 program
   .command('generate')
   .description('Generate something (requires license)')
@@ -435,150 +506,200 @@ program.parse();
 
 ## Webhook Integration
 
-### Handle License Key Creation
+### Handle license key delivery
+
+When a product with licensing enabled is purchased, an `entitlement_grant.delivered` webhook fires with the license key details:
+
+Persist a local license-to-subscription association during fulfillment. Cancellation handling must query that association by `subscription_id`; filtering only by customer would also revoke keys for unrelated products or subscriptions.
 
 ```typescript
 // app/api/webhooks/dodo/route.ts
-export async function POST(req: NextRequest) {
-  const event = await req.json();
-
-  if (event.type === 'license_key.created') {
-    const { id, key, product_id, customer_id, expires_at } = event.data;
-
-    // Store in your database
-    await prisma.license.create({
-      data: {
-        externalId: id,
-        key: key,
-        productId: product_id,
-        customerId: customer_id,
-        expiresAt: expires_at ? new Date(expires_at) : null,
-        status: 'active',
-      },
-    });
-
-    // Optional: Send custom email with activation instructions
-    await sendLicenseEmail(customer_id, key, product_id);
-  }
-
-  return NextResponse.json({ received: true });
-}
-```
-
----
-
-## Server-Side Validation
-
-For sensitive operations, validate server-side with your API key:
-
-```typescript
-// app/api/validate-license/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import DodoPayments from 'dodopayments';
 
 const client = new DodoPayments({
-  bearerToken: process.env.DODO_PAYMENTS_API_KEY!,
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  webhookKey: process.env.DODO_PAYMENTS_WEBHOOK_KEY,
 });
 
 export async function POST(req: NextRequest) {
-  const { licenseKey } = await req.json();
-
   try {
-    // Get detailed license info (requires API key)
-    const licenses = await client.licenseKeys.list({
-      license_key: licenseKey,
+    const body = await req.text();
+    const event = client.webhooks.unwrap(body, {
+      headers: {
+        'webhook-id': req.headers.get('webhook-id') || '',
+        'webhook-signature': req.headers.get('webhook-signature') || '',
+        'webhook-timestamp': req.headers.get('webhook-timestamp') || '',
+      },
     });
 
-    if (licenses.items.length === 0) {
-      return NextResponse.json({ valid: false, error: 'License not found' });
+    if (event.type === 'entitlement_grant.delivered') {
+      const { customer_id, id, license_key } = event.data;
+
+      // Delivered grants for other entitlement types do not include a license key.
+      if (!license_key) {
+        return NextResponse.json({ received: true });
+      }
+
+      // Store in your database
+      await prisma.license.create({
+        data: {
+          externalId: id,
+          key: license_key.key,
+          customerId: customer_id,
+          expiresAt: license_key.expires_at ? new Date(license_key.expires_at) : null,
+          activationsLimit: license_key.activations_limit,
+          status: 'active',
+        },
+      });
+
+      // Send email with activation instructions
+      await sendLicenseEmail(customer_id, license_key.key);
     }
 
-    const license = licenses.items[0];
+    if (event.type === 'subscription.cancelled' || event.type === 'subscription.expired') {
+      const { subscription_id, cancel_at_next_billing_date } = event.data;
 
-    // Check various conditions
-    const valid = 
-      license.status === 'active' &&
-      (!license.expires_at || new Date(license.expires_at) > new Date());
+      // End-of-period cancellation keeps access active until the term expires.
+      if (event.type === 'subscription.cancelled' && cancel_at_next_billing_date) {
+        return NextResponse.json({ received: true });
+      }
 
-    return NextResponse.json({
-      valid,
-      status: license.status,
-      activationsUsed: license.activations_count,
-      activationsLimit: license.activations_limit,
-      expiresAt: license.expires_at,
-    });
-  } catch (error: any) {
-    return NextResponse.json({ valid: false, error: error.message }, { status: 500 });
+      // Query your persisted license-to-subscription mapping.
+      const licenseKeyIds = await getLicenseKeyIdsForSubscription(subscription_id);
+
+      for (const licenseKeyId of licenseKeyIds) {
+        await client.licenseKeys.update(licenseKeyId, {
+          disabled: true,
+        });
+      }
+    }
+
+    return NextResponse.json({ received: true });
+  } catch (error) {
+    console.error('Webhook error:', error);
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
   }
 }
 ```
 
----
+**Webhook events:**
 
-## Best Practices
-
-### 1. Keep Limits Clear
-Choose sensible defaults for expiry and activations based on your product type.
-
-### 2. Guide Users
-Provide precise activation instructions:
-- "Paste the key in Settings → License"
-- "Run: `mycli activate <key>`"
-- Include self-serve documentation links
-
-### 3. Validate Server-Side
-For critical access control, always validate on your server before granting access.
-
-### 4. Handle Offline Gracefully
-Allow a grace period for offline use in desktop/CLI apps.
-
-### 5. Monitor Events
-Use webhooks to detect abuse patterns and automate revocations.
-
-### 6. Provide Easy Deactivation
-Let users deactivate devices themselves to manage their activation slots.
+- `entitlement_grant.delivered` — license key issued (current, recommended)
+- `entitlement_grant.revoked` — license key revoked
+- `license_key.created` — legacy event (still fires, but use `entitlement_grant.*` for new integrations)
+- `subscription.cancelled` — disable only this subscription's keys for immediate cancellation
+- `subscription.expired` — disable this subscription's keys when its term ends
 
 ---
 
-## Common Patterns
+## Common Mistakes
 
-### Feature Gating
+### 1. Validating only at install time
+
+Don't validate once and trust forever. Validate periodically (e.g., weekly) to catch revoked or expired keys.
 
 ```typescript
-async function canAccessFeature(feature: string, licenseKey: string) {
-  const { valid } = await validateLicense(licenseKey);
-  
-  if (!valid) return false;
+// Bad: validate once
+if (await validateLicense(key)) {
+  store.set('trusted', true);
+}
 
-  // Map features to license tiers
-  const featureTiers = {
-    'basic-export': ['starter', 'pro', 'enterprise'],
-    'advanced-export': ['pro', 'enterprise'],
-    'api-access': ['enterprise'],
-  };
-
-  const license = await getLicenseDetails(licenseKey);
-  return featureTiers[feature]?.includes(license.tier);
+// Good: validate on each startup
+const isValid = await validateLicense(key);
+if (!isValid) {
+  // Fail closed
+  process.exit(1);
 }
 ```
 
-### Subscription-Linked Licenses
+### 2. Not handling activation-limit errors
 
-When license is linked to a subscription:
+When a user hits the activation limit, they need a clear path to deactivate an old device.
 
 ```typescript
-// Handle subscription.cancelled webhook
-if (event.type === 'subscription.cancelled') {
-  const { customer_id } = event.data;
-  
-  // Disable associated license keys
-  const licenses = await client.licenseKeys.list({ customer_id });
-  
-  for (const license of licenses.items) {
-    await client.licenseKeys.update(license.id, {
-      status: 'disabled',
-    });
+try {
+  await client.licenses.activate({ license_key: key, name: deviceName });
+} catch (error: any) {
+  if (error.status === 422) {
+    // Show UI: "You've reached your activation limit. Deactivate a device first."
+    // Provide a list of active instances so they can choose which to remove.
   }
+}
+```
+
+### 3. Trusting client-side validation alone
+
+Always validate on your server before granting access to sensitive features.
+
+```typescript
+// Bad: trust the client
+if (localStorage.getItem('license_valid')) {
+  showPremiumFeature();
+}
+
+// Good: validate server-side
+const response = await fetch('/api/validate-license', {
+  method: 'POST',
+  body: JSON.stringify({ licenseKey }),
+});
+const { valid } = await response.json();
+if (valid) {
+  showPremiumFeature();
+}
+```
+
+### 4. Hardcoding license keys
+
+Never embed keys in client code or version control.
+
+```typescript
+// Bad
+const LICENSE_KEY = 'PRO-AAAA-BBBB-CCCC-DDDD';
+
+// Good
+const licenseKey = process.env.DODO_LICENSE_KEY;
+// or read from user input / secure storage
+```
+
+### 5. Not storing the instance ID
+
+The instance ID is required for deactivation. Store it alongside the key.
+
+```typescript
+// Bad: only store the key
+store.set('license_key', key);
+
+// Good: store both
+store.set('license', {
+  key,
+  instanceId: response.id,
+  activatedAt: new Date().toISOString(),
+});
+```
+
+### 6. Failing open on validation errors
+
+If validation fails (network error, server down), fail closed. Don't grant access.
+
+```typescript
+// Bad: assume valid if offline
+try {
+  const valid = await validateLicense(key);
+  return valid;
+} catch {
+  return true; // WRONG: grants access on error
+}
+
+// Good: fail closed, with optional grace period
+try {
+  const valid = await validateLicense(key);
+  return valid;
+} catch {
+  // Only trust local cache if within grace period
+  const lastValidated = store.get('last_validated_at');
+  const daysSince = (Date.now() - lastValidated) / (1000 * 60 * 60 * 24);
+  return daysSince < 30;
 }
 ```
 
@@ -586,6 +707,10 @@ if (event.type === 'subscription.cancelled') {
 
 ## Resources
 
-- [License Keys Documentation](https://docs.dodopayments.com/features/license-keys)
-- [API Reference](https://docs.dodopayments.com/api-reference/license-keys)
-- [Video Tutorial](https://www.youtube.com/watch?v=BNuLTXok8dQ)
+- [License Keys Guide](https://docs.dodopayments.com/features/license-keys)
+- [Activate License API](https://docs.dodopayments.com/api-reference/licenses/activate-license)
+- [Validate License API](https://docs.dodopayments.com/api-reference/licenses/validate-license)
+- [Deactivate License API](https://docs.dodopayments.com/api-reference/licenses/deactivate-license)
+- [License Key Instances API](https://docs.dodopayments.com/api-reference/licenses/get-license-key-instances)
+- [Entitlement Grant Webhooks](https://docs.dodopayments.com/developer-resources/webhooks/intents/entitlement-grant)
+- [Webhook Verification](https://docs.dodopayments.com/developer-resources/webhooks/verification)

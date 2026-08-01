@@ -1,0 +1,38 @@
+{
+    "name": "@dodopayments/skills",
+    "private": true,
+    "version": "2.0.0",
+    "description": "Official Dodo Payments agent skills. Tooling only - the skills themselves are the SKILL.md files.",
+    "type": "module",
+    "scripts": {
+        "validate": "node scripts/validate-skills.mjs .",
+        "typecheck": "node scripts/typecheck-examples.mjs",
+        "typecheck:go": "node scripts/check-go-examples.mjs",
+        "typecheck:python": "node scripts/check-python-examples.mjs",
+        "check": "npm run validate && npm run typecheck && npm run typecheck:go && npm run typecheck:python"
+    },
+    "devDependencies": {
+        "@dodopayments/astro": "^0.2.9",
+        "@dodopayments/better-auth": "^1.6.4",
+        "@dodopayments/bun": "^0.1.3",
+        "@dodopayments/convex": "^0.2.13",
+        "@dodopayments/express": "^0.2.9",
+        "@dodopayments/fastify": "^0.2.8",
+        "@dodopayments/hono": "^0.2.8",
+        "@dodopayments/nextjs": "^0.3.7",
+        "@dodopayments/nuxt": "^0.2.8",
+        "@dodopayments/react-native-checkout": "^1.1.0",
+        "@dodopayments/remix": "^0.2.8",
+        "@dodopayments/sveltekit": "^0.2.8",
+        "@dodopayments/tanstack": "^0.2.8",
+        "dodopayments": "^2.44.0",
+        "dodopayments-checkout": "^1.9.5",
+        "standardwebhooks": "^1.0.0",
+        "typescript": "^5.6.0"
+    },
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/dodopayments/skills.git"
+    }
+}

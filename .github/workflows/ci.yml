@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: Validate and type-check skills
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      # Needed by the Go/Python example checks below - not incidental config.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install
+        run: npm ci
+
+      # Structural rules: real hostnames, correct key prefixes, no hand-rolled
+      # webhook HMAC, no deprecated calls, manifest/README/frontmatter integrity.
+      - name: Validate skills
+        run: npm run validate
+
+      # Compiles every TypeScript example in every SKILL.md against the real
+      # `dodopayments` types. This is the check that catches wrong field and
+      # parameter names - the failure mode prose review does not reliably catch,
+      # and the one that fails silently in production rather than loudly.
+      - name: Type-check examples
+        run: npm run typecheck
+
+      # ~20 of the published examples are not TypeScript. An unchecked block is
+      # where the surviving bugs were found in the last two review rounds, so
+      # these run with the real toolchains rather than being taken on trust.
+      - name: Type-check Go examples
+        run: npm run typecheck:go
+
+      - name: Type-check Python examples
+        run: npm run typecheck:python
