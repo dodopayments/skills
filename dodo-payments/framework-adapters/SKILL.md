@@ -17,13 +17,24 @@ Use this skill when you need to integrate Dodo Payments into a web framework usi
 
 ## What framework adapters do
 
-Dodo publishes `@dodopayments/*` packages that wrap the core SDK with framework-specific route handlers. Instead of writing your own HTTP handlers, you import `Checkout`, `CustomerPortal`, or `Webhooks` from your framework's adapter and mount them directly in your routes.
+Dodo publishes `@dodopayments/*` packages that wrap the core SDK with framework-specific route handlers. Instead of writing your own HTTP handlers, you import the adapter's handlers and mount them directly in your routes.
 
 Each adapter exposes three handler families:
 
 - **Checkout:** static (GET only), dynamic (POST with cart), or session (POST with pre-built session).
 - **CustomerPortal:** generates a time-bound portal session link.
 - **Webhooks:** verifies webhook signatures and dispatches typed events.
+
+**Export names are not uniform across adapters.** Most export `Checkout` / `CustomerPortal` / `Webhooks`, but two differ, and the return shapes differ as well. Check this table before writing imports:
+
+| Adapter | Checkout export | Portal export | Handler shape |
+|---|---|---|---|
+| `nextjs`, `hono`, `astro`, `bun`, `remix`, `tanstack` | `Checkout` | `CustomerPortal` | returns a request handler |
+| `express` | `checkoutHandler` (lowercase) | `CustomerPortal` | returns `(req, res)` |
+| `fastify` | `Checkout` | `CustomerPortal` | returns `{ getHandler, postHandler }` |
+| `sveltekit` | `Checkout` | `CustomerPortal` | returns `{ GET, POST }` / `{ GET }` |
+| `nuxt` | `checkoutHandler` (auto-imported) | `customerPortalHandler` | no import statement |
+| `convex` | `DodoPayments` component | — | `createDodoWebhookHandler` |
 
 The adapters handle raw body preservation for webhook verification, environment variable mapping, and framework-specific request/response shapes. Checkout payload design belongs to the `checkout-integration` skill; webhook business logic belongs to `webhook-integration`; portal behavior belongs to `customer-management`.
 
@@ -73,6 +84,20 @@ DODO_PAYMENTS_WEBHOOK_SECRET=your-webhook-secret
 
 **Webhook key naming:** Some adapters reference `DODO_PAYMENTS_WEBHOOK_KEY`, others use `DODO_PAYMENTS_WEBHOOK_SECRET`. Check your framework's adapter docs and dashboard configuration to use the correct variable name.
 
+### Narrowing `environment`
+
+Adapter configs type `environment` as `Pick<ClientOptions, "environment">`, i.e. the literal union `"test_mode" | "live_mode"`. `process.env.X` is `string | undefined`, which does **not** assign to it — passing it directly is a type error in every adapter.
+
+Define this helper once and import it wherever you construct an adapter config:
+
+```typescript
+// lib/dodo-env.ts
+export const dodoEnvironment =
+  process.env.DODO_PAYMENTS_ENVIRONMENT === "live_mode" ? "live_mode" : "test_mode";
+```
+
+Defaulting to `test_mode` is deliberate: a missing or misspelled variable must never silently resolve to live mode. Every example below uses `dodoEnvironment`.
+
 ## Next.js
 
 **Package:** `@dodopayments/nextjs`  
@@ -87,14 +112,14 @@ import { Checkout } from "@dodopayments/nextjs";
 export const GET = Checkout({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
   type: "static",
 });
 
 export const POST = Checkout({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
   type: "session",
 });
 ```
@@ -107,7 +132,7 @@ import { CustomerPortal } from "@dodopayments/nextjs";
 
 export const GET = CustomerPortal({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
 });
 ```
 
@@ -131,23 +156,26 @@ export const POST = Webhooks({
 
 ### Checkout
 
+The Express adapter names its checkout export `checkoutHandler` in lowercase, unlike every other adapter. `import { Checkout } from "@dodopayments/express"` does not resolve.
+
 ```typescript
 import express from "express";
-import { Checkout } from "@dodopayments/express";
+import { checkoutHandler } from "@dodopayments/express";
+import { dodoEnvironment } from "./lib/dodo-env";
 
 const app = express();
 
-app.get("/api/checkout", Checkout({
+app.get("/api/checkout", checkoutHandler({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
   type: "static",
 }));
 
-app.post("/api/checkout", Checkout({
+app.post("/api/checkout", checkoutHandler({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
   type: "session",
 }));
 ```
@@ -159,7 +187,7 @@ import { CustomerPortal } from "@dodopayments/express";
 
 app.get("/api/customer-portal", CustomerPortal({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
 }));
 ```
 
@@ -186,29 +214,31 @@ Fastify requires a string body parser to preserve the raw body for webhook verif
 
 ### Checkout
 
+`Checkout(config)` returns an object with `getHandler` and `postHandler`, not a single callable. Build it once and mount each method, rather than calling the result.
+
 ```typescript
 import Fastify from "fastify";
 import { Checkout } from "@dodopayments/fastify";
+import { dodoEnvironment } from "./lib/dodo-env";
 
 const fastify = Fastify();
 
-fastify.get("/api/checkout", async (request, reply) => {
-  return Checkout({
-    bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-    returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-    environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
-    type: "static",
-  })(request);
+const staticCheckout = Checkout({
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
+  environment: dodoEnvironment,
+  type: "static",
 });
 
-fastify.post("/api/checkout", async (request, reply) => {
-  return Checkout({
-    bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-    returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-    environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
-    type: "session",
-  })(request);
+const sessionCheckout = Checkout({
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
+  environment: dodoEnvironment,
+  type: "session",
 });
+
+fastify.get("/api/checkout", staticCheckout.getHandler);
+fastify.post("/api/checkout", sessionCheckout.postHandler);
 ```
 
 ### Webhooks
@@ -245,14 +275,14 @@ const app = new Hono();
 app.get("/api/checkout", Checkout({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
   type: "static",
 }));
 
 app.post("/api/checkout", Checkout({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
   type: "session",
 }));
 ```
@@ -264,7 +294,7 @@ import { CustomerPortal } from "@dodopayments/hono";
 
 app.get("/api/customer-portal", CustomerPortal({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
 }));
 ```
 
@@ -341,7 +371,7 @@ import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
 const checkoutHandler = Checkout({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
   type: "session",
 });
 
@@ -358,7 +388,7 @@ import type { LoaderFunctionArgs } from "@remix-run/node";
 
 const portalHandler = CustomerPortal({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
 });
 
 export const loader = ({ request }: LoaderFunctionArgs) => portalHandler(request);
@@ -441,13 +471,14 @@ export default defineNuxtConfig({
 
 ### Checkout
 
+The Nuxt module registers its handlers with `addServerImportsDir`, so `checkoutHandler`, `customerPortalHandler`, and `Webhooks` are **auto-imported** inside `server/`. Do not import them from `@dodopayments/nuxt` — that entry point exports only the Nuxt module itself, and a named import from it will not resolve.
+
 ```typescript
 // server/routes/api/checkout.ts
-import { Checkout } from "@dodopayments/nuxt";
-
+// checkoutHandler and useRuntimeConfig are auto-imported by the module.
 const config = useRuntimeConfig();
 
-export default Checkout({
+export default checkoutHandler({
   bearerToken: config.private.bearerToken,
   returnUrl: config.private.returnUrl,
   environment: config.private.environment,
@@ -459,8 +490,7 @@ export default Checkout({
 
 ```typescript
 // server/routes/api/webhook.ts
-import { Webhooks } from "@dodopayments/nuxt";
-
+// Webhooks and useRuntimeConfig are auto-imported by the module.
 const config = useRuntimeConfig();
 
 export default Webhooks({
@@ -477,28 +507,29 @@ export default Webhooks({
 
 ### Checkout
 
+`Checkout(config)` returns a plain `(request: Request) => Promise<Response>`, so export it directly as the route's method handler. The adapter's own documented usage is `export const GET = Checkout(config)`.
+
 ```typescript
 // src/routes/api/checkout.ts
 import { Checkout } from "@dodopayments/tanstack";
-import { createServerFileRoute } from "@tanstack/react-start/server";
+import { dodoEnvironment } from "./lib/dodo-env";
 
-export const ServerRoute = createServerFileRoute("/api/checkout").methods({
-  GET: async ({ request }) =>
-    Checkout({
-      bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-      returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-      environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
-      type: "static",
-    })(request),
-  POST: async ({ request }) =>
-    Checkout({
-      bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-      returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-      environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
-      type: "session",
-    })(request),
+export const GET = Checkout({
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
+  environment: dodoEnvironment,
+  type: "static",
+});
+
+export const POST = Checkout({
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
+  environment: dodoEnvironment,
+  type: "session",
 });
 ```
+
+TanStack Start's server-route definition API has changed across releases (`createServerFileRoute` was removed). Wrap these exports in whatever route helper your installed version provides; the adapter handlers themselves are unaffected.
 
 ## Bun
 
@@ -512,13 +543,13 @@ import { Checkout, CustomerPortal } from "@dodopayments/bun";
 const checkoutHandler = Checkout({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   returnUrl: process.env.DODO_PAYMENTS_RETURN_URL,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
   type: "session",
 });
 
 const portalHandler = CustomerPortal({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
 });
 
 Bun.serve({

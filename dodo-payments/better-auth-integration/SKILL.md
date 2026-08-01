@@ -45,9 +45,12 @@ export const auth = betterAuth({
     dodopayments({
       client: dodoPayments,
       createCustomerOnSignUp: true,
+      // `user` here is Better Auth's base user: id, name, email, emailVerified,
+      // image, createdAt, updatedAt. Anything else (phone number, company, plan)
+      // must first be declared via `user.additionalFields` in your Better Auth
+      // config, otherwise it does not exist on the type and will be undefined.
       getCustomerParams: (user) => ({
         metadata: { better_auth_user_id: user.id },
-        phone_number: user.phoneNumber ?? null,
       }),
       use: [
         checkout({
