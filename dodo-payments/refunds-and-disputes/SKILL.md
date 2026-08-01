@@ -23,7 +23,7 @@ This skill covers issuing refunds (full and partial), handling the dispute lifec
 
 **Amounts** are always in the smallest currency unit (cents for USD, paise for INR, etc.).
 
-**Access revocation** means removing the customer's ability to use the product or service. On a dispute, you typically revoke access while it's open, then restore it if you win or keep it revoked if you lose.
+**Access revocation** means removing the customer's ability to use the product or service. On a dispute, you typically revoke access while it's open. Restore it only on `dispute.won`; all other outcomes keep access revoked until you reconcile them separately.
 
 ## Refunds
 
@@ -155,8 +155,8 @@ A dispute moves through seven events. Each event requires a different action fro
 |---|---|---|
 | `dispute.opened` | Customer initiated a chargeback | Record the dispute; consider revoking access immediately; gather evidence from your logs |
 | `dispute.challenged` | You submitted evidence | Wait for the card network to review |
-| `dispute.accepted` | Card network accepted your evidence | Restore access; mark dispute as won in your records |
-| `dispute.cancelled` | Customer withdrew the dispute | Restore access only if the original payment succeeded; check payment status first |
+| `dispute.accepted` | You accepted (conceded) the dispute; funds go to the cardholder | Keep access revoked; mark the dispute as accepted in your records |
+| `dispute.cancelled` | Customer or system cancelled the dispute | Keep access revoked; reconcile the payment separately |
 | `dispute.expired` | Dispute window closed without resolution | Treat as lost; keep access revoked |
 | `dispute.won` | You won the dispute | Funds are retained; restore access; update customer records |
 | `dispute.lost` | You lost the dispute | Funds returned to cardholder; keep access revoked; reconcile your records |
@@ -197,14 +197,16 @@ app.post('/webhook', async (req, res) => {
       // Do NOT restore access
     }
 
+    if (event.type === 'dispute.accepted') {
+      const dispute = event.data;
+      // Merchant conceded; funds go to the cardholder and access stays revoked
+      await markDisputeResolved(dispute.dispute_id, 'accepted');
+      // Do NOT restore access
+    }
+
     if (event.type === 'dispute.cancelled') {
       const dispute = event.data;
-      // Customer withdrew the dispute
-      // Only restore access if the original payment succeeded
-      const payment = await client.payments.retrieve(dispute.payment_id);
-      if (payment.status === 'succeeded') {
-        await restoreCustomerAccess(dispute.customer_id);
-      }
+      // Cancellation is not a win; keep access revoked and reconcile separately
       await markDisputeResolved(dispute.dispute_id, 'cancelled');
     }
 
@@ -243,12 +245,12 @@ async function handleDisputeLifecycle(dispute) {
       // (do nothing)
       break;
 
+    case 'accepted':
+      // You conceded; funds go to the cardholder and access stays revoked
+      break;
+
     case 'cancelled':
-      // Check the original payment status before restoring
-      const payment = await client.payments.retrieve(dispute.payment_id);
-      if (payment.status === 'succeeded') {
-        await restoreCustomerAccess(dispute.customer_id);
-      }
+      // Cancellation is not a win; reconcile separately and keep access revoked
       break;
 
     case 'expired':
@@ -293,7 +295,7 @@ async function reconcileRefund(refund) {
 
 **Ignoring partial refunds when computing entitlements.** If a customer refunds only one item from a multi-item purchase, their entitlement to the other items remains valid. Track refunds by item, not just by payment.
 
-**Granting access again on `dispute.cancelled` without checking payment status.** A cancelled dispute doesn't mean the original payment succeeded. Always verify the payment status before restoring access.
+**Restoring access on any outcome except `dispute.won`.** `dispute.accepted` means you conceded and the cardholder receives the funds. A cancelled dispute is also not a win. Keep access revoked and reconcile separately unless you receive `dispute.won`.
 
 **Submitting evidence after the dispute window closes.** The card network typically gives you 4 days to respond. Set a calendar reminder and gather evidence immediately when a dispute opens.
 
@@ -304,4 +306,4 @@ async function reconcileRefund(refund) {
 - [Refunds API](https://docs.dodopayments.com/api-reference/refunds/post-refunds)
 - [Refunds feature guide](https://docs.dodopayments.com/features/transactions/refunds)
 - [Dispute webhooks](https://docs.dodopayments.com/developer-resources/webhooks/intents/dispute)
-- [Webhook integration skill](./webhook-integration) for signature verification
+- [Webhook integration skill](../webhook-integration/) for signature verification

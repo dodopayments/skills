@@ -1,6 +1,6 @@
 ---
 name: customer-management
-description: Guide for managing customers, self-service portals, payment methods, and customer wallets with Dodo Payments
+description: Guide for managing customer records, saved payment methods, monetary wallets, and hosted customer-portal sessions; subscription lifecycle and custom billing UI are covered separately.
 ---
 
 # Customer Management
@@ -160,7 +160,7 @@ console.log(features);
 
 // List individual grants (with revocation status)
 const grants = await client.customers.listEntitlementGrants('cus_abc123', {
-  limit: 50,
+  page_size: 50,
 });
 console.log(grants);
 // [

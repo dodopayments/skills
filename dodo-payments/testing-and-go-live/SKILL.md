@@ -1,6 +1,6 @@
 ---
 name: testing-and-go-live
-description: Guide for testing payment flows, webhook verification, and launching to production with Dodo Payments
+description: Guide for test-mode payment scenarios, renewal simulation, local webhook delivery tests, test and live catalog migration, and production launch checks.
 ---
 
 # Testing and Go-Live
@@ -122,7 +122,7 @@ client.Subscriptions.Update(ctx, "sub_123", dodopayments.SubscriptionUpdateParam
 })
 ```
 
-This immediately schedules the renewal. If you used the subscription-renewal-failure card, the renewal will fail and trigger a `subscription.renewal_failed` webhook.
+This immediately schedules the renewal. If you used the subscription-renewal-failure card, the failed charge emits `payment.failed` and the affected subscription enters `on_hold`, which emits `subscription.on_hold`.
 
 ---
 

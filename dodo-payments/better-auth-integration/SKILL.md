@@ -1,6 +1,6 @@
 ---
 name: better-auth-integration
-description: Guide for integrating Dodo Payments with Better Auth for automatic customer sync, checkout, portal, and verified webhooks
+description: Guide only for applications using @dodopayments/better-auth, covering authenticated customer sync, checkout, portal access, usage ingestion, and verified webhook callbacks.
 ---
 
 # Better Auth Integration
@@ -200,8 +200,8 @@ export async function POST(request: Request) {
       case "payment.succeeded":
         console.log("Payment succeeded:", event.data.payment_id);
         break;
-      case "subscription.created":
-        console.log("Subscription created:", event.data.subscription_id);
+      case "subscription.active":
+        console.log("Subscription active:", event.data.subscription_id);
         break;
       case "subscription.cancelled":
         console.log("Subscription cancelled:", event.data.subscription_id);

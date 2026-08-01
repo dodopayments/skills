@@ -1,6 +1,6 @@
 ---
 name: subscription-integration
-description: Guide for implementing subscription billing with Dodo Payments - trials, upgrades, downgrades, and on-demand charging.
+description: Guide for managing recurring subscriptions after checkout, including trials, lifecycle states, plan changes, cancellation, failed-payment recovery, proration, mandates, and on-demand charges.
 ---
 
 # Dodo Payments Subscription Integration
@@ -19,7 +19,7 @@ Implement recurring billing with trials, plan changes, and on-demand charging. S
 
 ## Core Concepts
 
-**Subscription lifecycle:** A subscription moves through states: `pending` → `active` (or `trial` if configured) → `renewed` on each billing cycle. Failed payments move it to `on_hold` (recoverable) or `failed` (terminal). Cancellation sets it to `cancelled` or schedules it for `expired` at period end.
+**Subscription lifecycle:** The six subscription statuses are `pending`, `active`, `on_hold`, `cancelled`, `failed`, and `expired`. A trialing subscription reports `active`; `subscription.renewed` is an event, not a status. Failed payments can move a subscription to `on_hold` (recoverable) or `failed` (terminal). Cancellation sets it to `cancelled` or schedules it to become `expired` at period end.
 
 **Checkout Sessions:** The recommended path for creating subscriptions. A single-use hosted checkout that collects payment and customer data, then creates the subscription server-side.
 
@@ -114,7 +114,10 @@ When a subscription is `on_hold` due to failed payment, the customer can update 
 
 ```typescript
 await client.subscriptions.updatePaymentMethod('sub_xxxxx', {
-  payment_method_id: 'pm_new_method',
+  payment_method: {
+    type: 'existing',
+    payment_method_id: 'pm_new_method',
+  },
 });
 ```
 
@@ -124,7 +127,8 @@ Success emits `payment.succeeded` followed by `subscription.active`.
 
 ```typescript
 const history = await client.subscriptions.retrieveUsageHistory('sub_xxxxx', {
-  limit: 50,
+  page_size: 50,
+  page_number: 0,
 });
 ```
 
@@ -132,7 +136,11 @@ const history = await client.subscriptions.retrieveUsageHistory('sub_xxxxx', {
 
 ```typescript
 const creditUsage = await client.subscriptions.retrieveCreditUsage('sub_xxxxx');
-console.log(creditUsage.balance_after, creditUsage.deducted);
+console.log('Subscription:', creditUsage.subscription_id);
+
+for (const item of creditUsage.items) {
+  console.log(item.credit_entitlement_name, item.balance); // balance is a string
+}
 ```
 
 ---
@@ -175,8 +183,10 @@ const preview = await client.subscriptions.previewChangePlan('sub_xxxxx', {
   proration_billing_mode: 'prorated_immediately',
 });
 
-console.log('Charge:', preview.charge_amount, preview.charge_currency);
-console.log('Credit:', preview.credit_amount);
+console.log('Effective at:', preview.immediate_charge.effective_at);
+console.log('Line items:', preview.immediate_charge.line_items);
+console.log('Summary:', preview.immediate_charge.summary);
+console.log('New plan:', preview.new_plan);
 ```
 
 ### Cancel a Scheduled Plan Change
@@ -308,7 +318,7 @@ For full customer management (creating, updating, listing), see the `customer-ma
 
 | Event | When | Action |
 |-------|------|--------|
-| `subscription.active` | Subscription starts or trial ends | Grant access |
+| `subscription.active` | Subscription becomes active, including a trial start or recovery | Grant access |
 | `subscription.renewed` | Successful renewal | Log renewal, send receipt |
 | `subscription.on_hold` | Renewal/plan-change payment failed | Notify customer, offer recovery |
 | `subscription.plan_changed` | Plan upgraded/downgraded or add-ons changed | Update entitlements |
@@ -316,13 +326,28 @@ For full customer management (creating, updating, listing), see the `customer-ma
 | `subscription.failed` | Initial mandate/payment failed | Notify customer, offer retry or new subscription |
 | `subscription.expired` | Subscription term ended | Revoke access |
 
-For webhook signature verification, see the `webhook-integration` skill.
+Webhook signature verification, raw-body handling, durable processing, and idempotency are covered in the `webhook-integration` skill.
 
 ### Example Handler
 
 ```typescript
 export async function POST(req: NextRequest) {
-  const event = await req.json();
+  const raw = await req.text();
+  const headers = Object.fromEntries(req.headers.entries());
+  const event = await client.webhooks.unwrap(raw, { headers });
+  const webhookId = req.headers.get('webhook-id');
+
+  if (!webhookId) {
+    return NextResponse.json({ error: 'Missing webhook-id' }, { status: 400 });
+  }
+
+  // Implement this as an atomic insert backed by a UNIQUE constraint.
+  // Keep the claim and entitlement changes in the same database transaction.
+  const claimed = await claimWebhookId(webhookId);
+  if (!claimed) {
+    return NextResponse.json({ received: true });
+  }
+
   const data = event.data;
 
   switch (event.type) {

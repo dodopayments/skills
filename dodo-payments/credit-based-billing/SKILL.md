@@ -1,6 +1,6 @@
 ---
 name: credit-based-billing
-description: Complete guide for implementing credit-based billing with Dodo Payments using credit entitlements, balances, ledger entries, rollover, overage, and meter-based deduction.
+description: Complete guide for giving customers included, free, prepaid, promotional, or top-up credits using grants, balances, ledger deductions, rollover, expiry, alerts, and overage.
 ---
 
 # Dodo Payments Credit-Based Billing

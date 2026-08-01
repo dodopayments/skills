@@ -1,6 +1,6 @@
 ---
 name: dodo-best-practices
-description: Guide for integrating Dodo Payments - the all-in-one payment and billing platform for SaaS and AI products.
+description: Guide for initial Dodo Payments setup, including SDK installation, test and live environments, API keys, and the canonical checkout-to-webhook architecture.
 ---
 
 # Dodo Payments Integration Guide
@@ -214,7 +214,7 @@ Represent buyers. Can have multiple payment methods, subscriptions, and credit b
 
 The primary payment collection method. Create a session server-side, redirect the customer to the hosted checkout URL, and listen for webhooks to confirm payment.
 
-See the `checkout-and-subscriptions` skill for detailed checkout configuration.
+See the `checkout-integration` skill for detailed checkout configuration and the `subscription-integration` skill for recurring lifecycle management.
 
 ### Subscriptions
 
@@ -242,6 +242,10 @@ Virtual balances (API calls, tokens, compute hours) attached to products. Config
 Never grant access based on the browser `return_url` redirect alone. The webhook is the authoritative confirmation.
 
 ```typescript
+import express from 'express';
+
+const app = express();
+
 // 1. Create session
 const session = await client.checkoutSessions.create({
   product_cart: [{ product_id: 'pdt_example', quantity: 1 }],
@@ -251,25 +255,34 @@ const session = await client.checkoutSessions.create({
 
 // 2. Redirect to session.checkout_url
 
-// 3. Listen for webhook
-app.post('/webhook', async (req, res) => {
+// 3. Listen for webhook with the exact raw request bytes
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
     // 4. Verify signature
+    const webhookId = req.headers['webhook-id'] as string;
     const event = client.webhooks.unwrap(req.body.toString(), {
       headers: {
-        'webhook-id': req.headers['webhook-id'] as string,
+        'webhook-id': webhookId,
         'webhook-signature': req.headers['webhook-signature'] as string,
         'webhook-timestamp': req.headers['webhook-timestamp'] as string,
       },
     });
 
-    // 5. Grant access
-    if (event.type === 'payment.succeeded') {
-      const payment = event.data;
-      await grantAccess(payment.customer.customer_id);
-    }
+    // 5. Suppress duplicates with an atomic unique insert and run side effects
+    // in the same database transaction.
+    const handled = await processWebhookOnce(webhookId, async () => {
+      if (event.type === 'payment.succeeded') {
+        // ONE-TIME purchases only. Subscription access starts on subscription.active.
+        const payment = event.data;
+        await grantOneTimeAccess(payment.customer.customer_id);
+      }
 
-    res.json({ received: true });
+      if (event.type === 'subscription.active') {
+        await grantSubscriptionAccess(event.data);
+      }
+    });
+
+    res.json({ received: true, duplicate: !handled });
   } catch (error) {
     res.status(401).json({ error: 'Invalid signature' });
   }
@@ -290,18 +303,31 @@ Authorization: Bearer dodo_live_...
 
 ### Pagination
 
-List endpoints support `limit` and `offset`:
+List endpoints are page-numbered. They accept `page_size` and `page_number`, and the response
+exposes the rows on `items`:
 
 ```typescript
 const payments = await client.payments.list({
-  limit: 50,
-  offset: 0,
+  page_size: 50,
+  page_number: 0,
 });
+
+for (const payment of payments.items) {
+  console.log(payment.payment_id);
+}
+```
+
+The SDK can also walk every page for you:
+
+```typescript
+for await (const payment of client.payments.list()) {
+  console.log(payment.payment_id);
+}
 ```
 
 ### Rate Limits
 
-Dodo enforces rate limits. Responses include `X-RateLimit-*` headers. Implement exponential backoff on `429` responses.
+Dodo enforces rate limits. The SDK automatically retries `429` responses as described below.
 
 ### SDK Error Classes
 
@@ -319,7 +345,29 @@ try {
 
 ### Retries
 
-The SDK does not retry automatically. Implement retry logic for transient failures (5xx, timeouts).
+The SDK retries twice by default with a short exponential backoff on connection errors and `408`, `409`, `429`, and `5xx` responses. Do not add an unconditional custom retry loop.
+
+Override the default for all requests when constructing the client:
+
+```typescript
+const clientWithoutRetries = new DodoPayments({
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  environment: 'test_mode',
+  maxRetries: 0,
+});
+```
+
+Or override it for one request:
+
+```typescript
+await client.checkoutSessions.create(
+  {
+    product_cart: [{ product_id: 'pdt_example', quantity: 1 }],
+    customer: { email: 'customer@example.com' },
+  },
+  { maxRetries: 0 },
+);
+```
 
 ---
 

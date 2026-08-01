@@ -83,7 +83,7 @@ const subscription = await client.products.create({
 });
 ```
 
-For usage-based products, reference the meter you created in the `usage-based-billing` skill:
+This skill is the canonical source for product creation request shapes. For a usage-based product, create the meter as described in the `usage-based-billing` skill, then attach it through the singular `price.meters` array:
 
 ```typescript
 const metered = await client.products.create({
@@ -92,11 +92,25 @@ const metered = await client.products.create({
   price: {
     type: 'usage_based_price',
     currency: 'USD',
-    price_per_unit: 100, // $1.00 per 100 calls
-    meter_id: 'mtr_api_calls',
+    discount: 0,
+    fixed_price: 0, // No fixed monthly charge; amounts use the smallest currency unit
+    payment_frequency_count: 1,
+    payment_frequency_interval: 'Month',
+    subscription_period_count: 1,
+    subscription_period_interval: 'Month',
+    purchasing_power_parity: false,
+    meters: [
+      {
+        meter_id: 'mtr_api_calls',
+        price_per_unit: '0.01',
+        free_threshold: 1000,
+      },
+    ],
   },
 });
 ```
+
+`price_per_unit` is a decimal string in the configured currency's smallest unit. The optional `free_threshold` excludes that many aggregated units before per-unit charging begins.
 
 ## Listing and retrieving products
 

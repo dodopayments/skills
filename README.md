@@ -24,13 +24,13 @@ npx skills add dodopayments/skills/subscription-integration
 
 Add the marketplace:
 
-```
+```text
 /plugin marketplace add dodopayments/skills
 ```
 
 Install a plugin:
 
-```
+```text
 /plugin install dodo-best-practices
 /plugin install webhook-integration
 /plugin install subscription-integration

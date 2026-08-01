@@ -1,6 +1,6 @@
 ---
 name: checkout-integration
-description: Guide for creating checkout sessions and payment flows with Dodo Payments - one-time, subscriptions, and overlay checkout.
+description: Guide for starting hosted Checkout Sessions, payment links, and overlay or inline checkout for one-time and recurring products; use subscription-integration for post-checkout lifecycle management.
 ---
 
 # Dodo Payments Checkout Integration
@@ -26,7 +26,7 @@ Dodo Payments offers three ways to collect payment:
 |--------|----------|-------|
 | **Checkout Sessions** (recommended) | Most integrations; full control | Server-side SDK call |
 | **Static Payment Links** | No-code sharing; reusable URLs | Dashboard or direct URL |
-| **Overlay/Inline Checkout** | Seamless UX; stays on your site | Client-side SDK |
+| **Overlay/Inline Checkout** | Checkout stays on your site | Client-side SDK |
 
 **Legacy:** Dynamic Payment Links created via `POST /payments` or `POST /subscriptions` are deprecated. Use Checkout Sessions instead.
 
@@ -96,7 +96,7 @@ const session = await client.checkoutSessions.create({
   product_cart: [
     { product_id: 'pdt_example', quantity: 1 }
   ],
-  customer_id: 'cus_existing_id',
+  customer: { customer_id: 'cus_existing_id' },
   return_url: 'https://yoursite.com/success'
 });
 ```
@@ -209,29 +209,64 @@ const session = await client.checkoutSessions.create({
 
 ```typescript
 // app/api/checkout/route.ts
-import { NextRequest, NextResponse } from 'next/server';
+import { NextResponse } from 'next/server';
 import DodoPayments from 'dodopayments';
+import { getCurrentUser } from '@/lib/auth';
 
 const client = new DodoPayments({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY!,
   environment: process.env.NODE_ENV === 'production' ? 'live_mode' : 'test_mode'
 });
 
-export async function POST(req: NextRequest) {
+type PlanId = 'starter' | 'pro';
+
+const PRODUCT_IDS: Record<PlanId, string> = {
+  starter: 'pdt_starter_monthly',
+  pro: 'pdt_pro_monthly'
+};
+
+function productIdForPlan(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  return PRODUCT_IDS[value as PlanId] ?? null;
+}
+
+export async function POST(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
+  }
+
+  let body: unknown;
   try {
-    const { productId, quantity = 1, email, name, metadata } = await req.json();
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
 
-    if (!productId || !email) {
-      return NextResponse.json(
-        { error: 'Missing productId or email' },
-        { status: 400 }
-      );
-    }
+  if (!body || typeof body !== 'object') {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
 
+  const input = body as { planId?: unknown; quantity?: unknown };
+  const productId = productIdForPlan(input.planId);
+  const quantity = input.quantity ?? 1;
+
+  if (!productId) {
+    return NextResponse.json({ error: 'Unknown plan' }, { status: 400 });
+  }
+
+  if (!Number.isInteger(quantity) || (quantity as number) < 1) {
+    return NextResponse.json(
+      { error: 'Quantity must be a positive integer' },
+      { status: 400 }
+    );
+  }
+
+  try {
     const session = await client.checkoutSessions.create({
-      product_cart: [{ product_id: productId, quantity }],
-      customer: { email, name },
-      metadata,
+      product_cart: [{ product_id: productId, quantity: quantity as number }],
+      customer: { email: user.email, name: user.name },
+      metadata: { app_user_id: user.id },
       return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`
     });
 
@@ -239,10 +274,10 @@ export async function POST(req: NextRequest) {
       checkoutUrl: session.checkout_url,
       sessionId: session.session_id
     });
-  } catch (error: any) {
+  } catch (error) {
     console.error('Checkout error:', error);
     return NextResponse.json(
-      { error: error.message || 'Failed to create checkout' },
+      { error: 'Failed to create checkout' },
       { status: 500 }
     );
   }
@@ -258,13 +293,12 @@ export async function POST(req: NextRequest) {
 import { useState } from 'react';
 
 interface CheckoutButtonProps {
-  productId: string;
-  email: string;
-  name?: string;
+  planId: 'starter' | 'pro';
+  quantity?: number;
   children: React.ReactNode;
 }
 
-export function CheckoutButton({ productId, email, name, children }: CheckoutButtonProps) {
+export function CheckoutButton({ planId, quantity = 1, children }: CheckoutButtonProps) {
   const [loading, setLoading] = useState(false);
 
   const handleCheckout = async () => {
@@ -273,15 +307,16 @@ export function CheckoutButton({ productId, email, name, children }: CheckoutBut
       const response = await fetch('/api/checkout', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId, email, name })
+        body: JSON.stringify({ planId, quantity })
       });
 
-      const data = await response.json();
-      if (data.checkoutUrl) {
-        window.location.href = data.checkoutUrl;
-      } else {
-        throw new Error(data.error || 'Failed to create checkout');
+      if (!response.ok) {
+        throw new Error('Failed to create checkout');
       }
+
+      const data = (await response.json()) as { checkoutUrl?: string };
+      if (!data.checkoutUrl) throw new Error('Checkout URL was not returned');
+      window.location.href = data.checkoutUrl;
     } catch (error) {
       console.error('Checkout error:', error);
       alert('Failed to start checkout. Please try again.');
@@ -334,28 +369,91 @@ export default function SuccessPage() {
 ```typescript
 import express from 'express';
 import DodoPayments from 'dodopayments';
+import { getCurrentUser } from './auth';
+import { fulfillOneTimePurchase, grantSubscriptionAccess } from './entitlements';
 
 const app = express();
-app.use(express.json());
 
 const client = new DodoPayments({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY!,
   environment: process.env.NODE_ENV === 'production' ? 'live_mode' : 'test_mode'
 });
 
-app.post('/api/checkout', async (req, res) => {
+// Mount the webhook before express.json() so verification receives signed bytes.
+app.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   try {
-    const { productId, email, name, quantity = 1 } = req.body;
+    const event = client.webhooks.unwrap(req.body.toString('utf8'), {
+      headers: {
+        'webhook-id': req.headers['webhook-id'] as string,
+        'webhook-signature': req.headers['webhook-signature'] as string,
+        'webhook-timestamp': req.headers['webhook-timestamp'] as string
+      }
+    });
 
+    if (event.type === 'payment.succeeded') {
+      // This branch fulfills one-time purchases only.
+      await fulfillOneTimePurchase(event.data.customer.customer_id);
+    } else if (event.type === 'subscription.active') {
+      // Subscription access starts only after this verified event.
+      await grantSubscriptionAccess(event.data);
+    }
+
+    res.json({ received: true });
+  } catch (error) {
+    console.error('Webhook verification failed:', error);
+    res.status(401).json({ error: 'Invalid signature' });
+  }
+});
+
+app.use(express.json());
+
+type PlanId = 'starter' | 'pro';
+
+const PRODUCT_IDS: Record<PlanId, string> = {
+  starter: 'pdt_starter_monthly',
+  pro: 'pdt_pro_monthly'
+};
+
+function productIdForPlan(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  return PRODUCT_IDS[value as PlanId] ?? null;
+}
+
+app.post('/api/checkout', async (req, res) => {
+  const user = await getCurrentUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'Not authenticated' });
+    return;
+  }
+
+  const { planId, quantity = 1 } = req.body as {
+    planId?: unknown;
+    quantity?: unknown;
+  };
+  const productId = productIdForPlan(planId);
+
+  if (!productId) {
+    res.status(400).json({ error: 'Unknown plan' });
+    return;
+  }
+
+  if (!Number.isInteger(quantity) || (quantity as number) < 1) {
+    res.status(400).json({ error: 'Quantity must be a positive integer' });
+    return;
+  }
+
+  try {
     const session = await client.checkoutSessions.create({
-      product_cart: [{ product_id: productId, quantity }],
-      customer: { email, name },
+      product_cart: [{ product_id: productId, quantity: quantity as number }],
+      customer: { email: user.email, name: user.name },
+      metadata: { app_user_id: user.id },
       return_url: `${process.env.APP_URL}/success`
     });
 
     res.json({ checkoutUrl: session.checkout_url });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
+  } catch (error) {
+    console.error('Checkout error:', error);
+    res.status(500).json({ error: 'Failed to create checkout' });
   }
 });
 
@@ -369,40 +467,54 @@ app.get('/success', (req, res) => {
 ## Python (FastAPI)
 
 ```python
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from dodopayments import DodoPayments
+import logging
 import os
+from typing import Annotated, Literal
+
+from dodopayments import DodoPayments
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel, Field
+
+from app.auth import User, get_current_user
 
 app = FastAPI()
+logger = logging.getLogger(__name__)
 client = DodoPayments(
     bearer_token=os.environ["DODO_PAYMENTS_API_KEY"],
     environment="test_mode"
 )
 
+PRODUCT_IDS = {
+    "starter": "pdt_starter_monthly",
+    "pro": "pdt_pro_monthly",
+}
+
 class CheckoutRequest(BaseModel):
-    product_id: str
-    email: str
-    name: str = None
-    quantity: int = 1
+    plan_id: Literal["starter", "pro"]
+    quantity: int = Field(default=1, gt=0)
 
 @app.post("/api/checkout")
-async def create_checkout(request: CheckoutRequest):
+async def create_checkout(
+    request: CheckoutRequest,
+    user: Annotated[User, Depends(get_current_user)],
+):
     try:
         session = client.checkout_sessions.create(
             product_cart=[{
-                "product_id": request.product_id,
+                "product_id": PRODUCT_IDS[request.plan_id],
                 "quantity": request.quantity
             }],
             customer={
-                "email": request.email,
-                "name": request.name
+                "email": user.email,
+                "name": user.name
             },
+            metadata={"app_user_id": user.id},
             return_url=f"{os.environ['APP_URL']}/success"
         )
         return {"checkout_url": session.checkout_url}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as error:
+        logger.exception("Checkout session creation failed")
+        raise HTTPException(status_code=500, detail="Failed to create checkout") from error
 ```
 
 ---
@@ -417,49 +529,140 @@ Use the `dodopayments-checkout` package for overlay or inline checkout that stay
 npm install dodopayments-checkout
 ```
 
-### Overlay Mode
+### Server Route
+
+Create the Checkout Session on the server. The browser sends a public plan slug, while the server derives
+the customer from the authenticated user and maps the slug to an allowlisted product id.
 
 ```typescript
-import { DodoPayments } from 'dodopayments-checkout';
+// app/api/overlay-checkout/route.ts
+import { NextResponse } from 'next/server';
+import DodoPayments from 'dodopayments';
+import { getCurrentUser } from '@/lib/auth';
 
-// First, create a checkout session on your server
-const session = await client.checkoutSessions.create({
-  product_cart: [{ product_id: 'pdt_example', quantity: 1 }],
-  customer: { email: 'customer@example.com' },
-  return_url: 'https://yoursite.com/success'
+const client = new DodoPayments({
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY!,
+  environment: process.env.NODE_ENV === 'production' ? 'live_mode' : 'test_mode'
 });
 
-// Then initialize and open the overlay
-DodoPayments.Initialize({
-  mode: 'test', // or 'live'
-  displayType: 'overlay',
-  onEvent: (event) => {
-    console.log('Checkout event:', event);
+type PlanId = 'starter' | 'pro';
+
+const PRODUCT_IDS: Record<PlanId, string> = {
+  starter: 'pdt_starter_monthly',
+  pro: 'pdt_pro_monthly'
+};
+
+export async function POST(request: Request) {
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
   }
-});
 
-DodoPayments.Checkout.open({
-  checkoutUrl: session.checkout_url
-});
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+
+  if (!body || typeof body !== 'object') {
+    return NextResponse.json({ error: 'Invalid request body' }, { status: 400 });
+  }
+
+  const { planId, quantity = 1 } = body as {
+    planId?: unknown;
+    quantity?: unknown;
+  };
+  const productId = typeof planId === 'string'
+    ? PRODUCT_IDS[planId as PlanId]
+    : undefined;
+
+  if (!productId) {
+    return NextResponse.json({ error: 'Unknown plan' }, { status: 400 });
+  }
+
+  if (!Number.isInteger(quantity) || (quantity as number) < 1) {
+    return NextResponse.json(
+      { error: 'Quantity must be a positive integer' },
+      { status: 400 }
+    );
+  }
+
+  try {
+    const session = await client.checkoutSessions.create({
+      product_cart: [{ product_id: productId, quantity: quantity as number }],
+      customer: { email: user.email, name: user.name },
+      metadata: { app_user_id: user.id },
+      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/checkout/success`
+    });
+
+    if (!session.checkout_url) {
+      return NextResponse.json({ error: 'Checkout URL was not returned' }, { status: 502 });
+    }
+
+    return NextResponse.json({ checkoutUrl: session.checkout_url });
+  } catch (error) {
+    console.error('Overlay checkout error:', error);
+    return NextResponse.json({ error: 'Failed to create checkout' }, { status: 500 });
+  }
+}
 ```
 
-### Inline/Embedded Mode
+### Browser Overlay and Inline Modes
+
+Browser code calls the server route and receives only the checkout URL. The Dodo Payments API bearer token
+stays in the server route and is never sent to the browser.
 
 ```typescript
+// lib/open-checkout.ts
 import { DodoPayments } from 'dodopayments-checkout';
 
-DodoPayments.Initialize({
-  mode: 'test',
-  displayType: 'inline',
-  onEvent: (event) => {
-    console.log('Checkout event:', event);
-  }
-});
+type PlanId = 'starter' | 'pro';
 
-DodoPayments.Checkout.open({
-  checkoutUrl: session.checkout_url,
-  elementId: 'dodo-inline-checkout'
-});
+async function createCheckoutUrl(planId: PlanId, quantity = 1): Promise<string> {
+  const response = await fetch('/api/overlay-checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ planId, quantity })
+  });
+
+  if (!response.ok) throw new Error('Failed to create checkout');
+
+  const data = (await response.json()) as { checkoutUrl?: string };
+  if (!data.checkoutUrl) throw new Error('Checkout URL was not returned');
+  return data.checkoutUrl;
+}
+
+export async function openOverlayCheckout(planId: PlanId): Promise<void> {
+  const checkoutUrl = await createCheckoutUrl(planId);
+
+  DodoPayments.Initialize({
+    mode: 'test', // or 'live'
+    displayType: 'overlay',
+    onEvent: (event) => {
+      console.log('Checkout event:', event);
+    }
+  });
+
+  DodoPayments.Checkout.open({ checkoutUrl });
+}
+
+export async function openInlineCheckout(planId: PlanId): Promise<void> {
+  const checkoutUrl = await createCheckoutUrl(planId);
+
+  DodoPayments.Initialize({
+    mode: 'test', // or 'live'
+    displayType: 'inline',
+    onEvent: (event) => {
+      console.log('Checkout event:', event);
+    }
+  });
+
+  DodoPayments.Checkout.open({
+    checkoutUrl,
+    elementId: 'dodo-inline-checkout'
+  });
+}
 ```
 
 ```html
@@ -522,7 +725,7 @@ const preview = await client.checkoutSessions.preview({
   billing_currency: 'EUR'
 });
 
-console.log('Preview total:', preview.total_amount);
+console.log('Preview total:', preview.current_breakup.total_amount);
 ```
 
 ---
@@ -591,30 +794,9 @@ Query parameters:
 
 ### Verify Payment Server-Side
 
-Do not trust the browser redirect. Always verify via webhook:
-
-```typescript
-app.post('/webhook', async (req, res) => {
-  try {
-    const event = client.webhooks.unwrap(req.body.toString(), {
-      headers: {
-        'webhook-id': req.headers['webhook-id'] as string,
-        'webhook-signature': req.headers['webhook-signature'] as string,
-        'webhook-timestamp': req.headers['webhook-timestamp'] as string
-      }
-    });
-
-    if (event.type === 'payment.succeeded') {
-      // Payment verified. Grant access here.
-      await grantAccess(event.data.customer_id);
-    }
-
-    res.json({ received: true });
-  } catch (error) {
-    res.status(401).json({ error: 'Invalid signature' });
-  }
-});
-```
+Do not trust the browser redirect. Use the Express webhook route above: it receives the raw signed body
+before `express.json()`, fulfills one-time purchases on verified `payment.succeeded` using
+`event.data.customer.customer_id`, and grants subscription access only on verified `subscription.active`.
 
 Webhook signature verification is covered in the `webhook-integration` skill.
 
@@ -622,8 +804,9 @@ Webhook signature verification is covered in the `webhook-integration` skill.
 
 ## Common Mistakes
 
-**1. Trusting the browser redirect**
-The return URL redirect is not proof of payment. Always verify via webhook before granting access or fulfilling the order.
+**1. Granting access from the return URL**
+The return URL redirect is not proof of payment. Never grant access or fulfill an order from its query
+parameters; wait for a verified webhook event.
 
 **2. Using deprecated APIs**
 Do not use `client.payments.create()` or `client.subscriptions.create()` for new integrations. Both are deprecated. Use `client.checkoutSessions.create()`.
@@ -631,8 +814,8 @@ Do not use `client.payments.create()` or `client.subscriptions.create()` for new
 **3. Forgetting the `environment` flag**
 The default is `live_mode`. Always set `environment: 'test_mode'` during development to avoid charging real cards.
 
-**4. Mixing `discount_code` and `discount_codes`**
-The singular `discount_code` is deprecated. Use the array `discount_codes` (max 20). They cannot be combined.
+**4. Assuming only one discount-code form is valid**
+Both `discount_code` (a string) and `discount_codes` (an array) are valid Checkout Session parameters.
 
 **5. Amounts in wrong unit**
 All amounts are in the smallest currency unit (cents for USD). $10 is `1000`, not `10`.
@@ -644,7 +827,12 @@ Checkout URLs are single-use. Create a new session for each checkout attempt.
 When `confirm=true`, the session is finalized immediately and the checkout URL expires in 15 minutes instead of 24 hours. Use only when you have all required customer data.
 
 **8. Forgetting raw body for webhooks**
-Webhook signature verification requires the raw request body, not a re-serialized JSON object. Use `express.raw()` middleware.
+Webhook signature verification requires the raw request body, not a re-serialized JSON object. Mount the
+webhook route with `express.raw({ type: 'application/json' })` before `express.json()`.
+
+**9. Trusting a client-supplied product id**
+Do not accept an arbitrary `pdt_` id from the browser. Authenticate the user, accept a public plan slug,
+map it to an allowlisted product id on the server, and reject quantities that are not positive integers.
 
 ---
 

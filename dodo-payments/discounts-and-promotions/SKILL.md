@@ -66,13 +66,19 @@ const flatDiscount = await client.discounts.create({
 
 ```typescript
 const discounts = await client.discounts.list({
-  limit: 50,
-  offset: 0,
+  page_size: 50,
+  page_number: 0,
 });
 
-discounts.data.forEach(discount => {
+// Paginated responses expose `items`.
+for (const discount of discounts.items) {
   console.log(`${discount.code}: ${discount.type} ${discount.amount}`);
-});
+}
+
+// Or let the SDK walk every page for you:
+for await (const discount of client.discounts.list()) {
+  console.log(discount.code);
+}
 ```
 
 ### Retrieve a discount by ID

@@ -1,6 +1,6 @@
 ---
 name: usage-based-billing
-description: Guide for implementing usage-based billing with Dodo Payments - meters, events, pricing per unit, and metered subscriptions.
+description: Guide for charging directly per measured API call, token, storage unit, or other consumption using meters, stable usage events, aggregation, free thresholds, and metered subscriptions.
 ---
 
 # Dodo Payments Usage-Based Billing
@@ -129,19 +129,29 @@ await client.meters.unarchive('mtr_abc123');
 ### Send Events
 
 ```typescript
-await client.usageEvents.ingest({
-  events: [{
-    event_id: `api_${Date.now()}_${crypto.randomUUID()}`,
-    customer_id: 'cus_abc123',
-    event_name: 'api.call',
-    timestamp: new Date().toISOString(),
-    metadata: {
-      endpoint: '/v1/users',
-      method: 'GET',
-    }
-  }]
-});
+async function recordApiCall(
+  customerId: string,
+  requestId: string,
+  occurredAt: string,
+): Promise<number> {
+  const response = await client.usageEvents.ingest({
+    events: [{
+      event_id: `api-call:${requestId}`,
+      customer_id: customerId,
+      event_name: 'api.call',
+      timestamp: occurredAt,
+      metadata: {
+        endpoint: '/v1/users',
+        method: 'GET',
+      },
+    }],
+  });
+
+  return response.ingested_count;
+}
 ```
+
+`requestId` must identify the underlying API operation and remain unchanged across retries. Do not generate it inside the ingestion attempt.
 
 ### Event Schema
 
@@ -155,7 +165,8 @@ await client.usageEvents.ingest({
 
 ### Idempotency and Deduplication
 
-- Each `event_id` is unique per customer per meter.
+- Each distinct operation gets one globally unique `event_id`.
+- Derive the ID from an immutable request, job, generation, or snapshot ID and reuse it on every retry.
 - Duplicate IDs in a single request reject the entire batch.
 - An ID already ingested in an earlier request is silently ignored, making retries safe.
 
@@ -166,17 +177,19 @@ Send up to 1,000 events per request:
 ```typescript
 async function trackBatchUsage(
   events: Array<{
+    operationId: string;
     customerId: string;
     eventName: string;
+    occurredAt: string;
     metadata: Record<string, string>;
   }>
 ) {
-  const formattedEvents = events.map((e, i) => ({
-    event_id: `batch_${Date.now()}_${i}_${crypto.randomUUID()}`,
-    customer_id: e.customerId,
-    event_name: e.eventName,
-    timestamp: new Date().toISOString(),
-    metadata: e.metadata,
+  const formattedEvents = events.map((event) => ({
+    event_id: `usage:${event.operationId}`,
+    customer_id: event.customerId,
+    event_name: event.eventName,
+    timestamp: event.occurredAt,
+    metadata: event.metadata,
   }));
 
   await client.usageEvents.ingest({ events: formattedEvents });
@@ -184,9 +197,9 @@ async function trackBatchUsage(
 
 // Batch track multiple API calls
 await trackBatchUsage([
-  { customerId: 'cus_abc', eventName: 'api.call', metadata: { endpoint: '/v1/users' } },
-  { customerId: 'cus_abc', eventName: 'api.call', metadata: { endpoint: '/v1/orders' } },
-  { customerId: 'cus_xyz', eventName: 'api.call', metadata: { endpoint: '/v1/products' } },
+  { operationId: 'req_101', customerId: 'cus_abc', eventName: 'api.call', occurredAt: '2026-08-01T10:00:00Z', metadata: { endpoint: '/v1/users' } },
+  { operationId: 'req_102', customerId: 'cus_abc', eventName: 'api.call', occurredAt: '2026-08-01T10:00:01Z', metadata: { endpoint: '/v1/orders' } },
+  { operationId: 'req_103', customerId: 'cus_xyz', eventName: 'api.call', occurredAt: '2026-08-01T10:00:02Z', metadata: { endpoint: '/v1/products' } },
 ]);
 ```
 
@@ -208,29 +221,13 @@ const event = await client.usageEvents.retrieve('evt_abc123');
 
 ### Per-Unit Pricing
 
-The only currently documented and operable pricing model. Configure a meter on a product price with:
+The only currently documented and operable pricing model. A meter attachment uses:
 - `price_per_unit`: decimal string (max 5 integer digits, 12 decimal places)
 - `free_threshold`: optional integer (usage below this is not charged)
 
 Charge formula: `(usage − threshold) × price_per_unit`
 
-```typescript
-// Create a product with per-unit pricing
-const product = await client.products.create({
-  name: 'API Service',
-  type: 'usage_based',
-  prices: [{
-    type: 'usage_based_price',
-    currency: 'usd',
-    billing_period: 'month',
-    meters: [{
-      meter_id: 'mtr_api_calls',
-      price_per_unit: '0.001',
-      free_threshold: 1000,
-    }]
-  }]
-});
-```
+The `product-catalog-management` skill is the canonical source for the complete product creation request. It defines the singular `price` object with `type: 'usage_based_price'` and its nested `meters` array; do not define a parallel product schema here.
 
 **Note:** Tiered, graduated, volume, and staircase pricing models are not currently documented in the Dodo Payments API. Use per-unit pricing with free thresholds for now.
 
@@ -240,35 +237,58 @@ const product = await client.products.create({
 
 ### Track API Calls
 
-Place the ingest call in a non-blocking context to avoid slowing down user requests:
+Persist the event before reporting the operation as complete, then ingest it from a retrying worker. The outbox or queue implementation must durably store the payload before `persist` resolves.
 
 ```typescript
-// Express middleware (non-blocking)
-app.use(async (req, res, next) => {
-  res.on('finish', async () => {
-    // Fire-and-forget after response is sent
-    client.usageEvents.ingest({
-      events: [{
-        event_id: `api_${Date.now()}_${crypto.randomUUID()}`,
-        customer_id: req.user.id,
-        event_name: 'api.call',
-        timestamp: new Date().toISOString(),
-        metadata: {
-          endpoint: req.path,
-          method: req.method,
-          status: res.statusCode,
-        }
-      }]
-    }).catch(err => console.error('Failed to ingest event:', err));
+type PersistedUsageEvent = {
+  event_id: string;
+  customer_id: string;
+  event_name: string;
+  timestamp: string;
+  metadata: Record<string, string | number | boolean>;
+};
+
+interface UsageOutbox {
+  persist(event: PersistedUsageEvent): Promise<void>;
+  nextBatch(limit: number): Promise<PersistedUsageEvent[]>;
+  markIngested(eventIds: string[]): Promise<void>;
+}
+
+async function completeApiOperation(
+  outbox: UsageOutbox,
+  operationId: string,
+  customerId: string,
+  occurredAt: string,
+): Promise<void> {
+  await outbox.persist({
+    event_id: `api-call:${operationId}`,
+    customer_id: customerId,
+    event_name: 'api.call',
+    timestamp: occurredAt,
+    metadata: { endpoint: '/v1/users', method: 'GET', status: 200 },
   });
-  next();
-});
+}
+
+async function ingestUsageOutbox(outbox: UsageOutbox): Promise<void> {
+  const events = await outbox.nextBatch(1000);
+  if (events.length === 0) return;
+
+  await client.usageEvents.ingest({ events });
+  await outbox.markIngested(events.map((event) => event.event_id));
+}
 ```
+
+If the worker crashes after Dodo accepts the batch but before `markIngested`, retry the same persisted events with the same IDs. Dodo ignores the already-ingested IDs.
 
 ### Track AI Token Usage
 
 ```typescript
-async function callAI(customerId: string, prompt: string) {
+async function callAI(
+  customerId: string,
+  generationId: string,
+  prompt: string,
+  completedAt: string,
+) {
   const response = await openai.chat.completions.create({
     model: 'gpt-4',
     messages: [{ role: 'user', content: prompt }],
@@ -277,10 +297,10 @@ async function callAI(customerId: string, prompt: string) {
   // Track tokens after completion
   await client.usageEvents.ingest({
     events: [{
-      event_id: `ai_${Date.now()}_${crypto.randomUUID()}`,
+      event_id: `generation:${generationId}`,
       customer_id: customerId,
       event_name: 'ai.tokens',
-      timestamp: new Date().toISOString(),
+      timestamp: completedAt,
       metadata: {
         tokens: response.usage.total_tokens.toString(),
         prompt_tokens: response.usage.prompt_tokens.toString(),
@@ -299,13 +319,18 @@ async function callAI(customerId: string, prompt: string) {
 For snapshot-based metrics (current state), use the `last` aggregation:
 
 ```typescript
-async function updateStorageUsage(customerId: string, bytesUsed: number) {
+async function updateStorageUsage(
+  customerId: string,
+  snapshotId: string,
+  bytesUsed: number,
+  capturedAt: string,
+) {
   await client.usageEvents.ingest({
     events: [{
-      event_id: `storage_${Date.now()}_${customerId}`,
+      event_id: `storage-snapshot:${snapshotId}`,
       customer_id: customerId,
       event_name: 'storage.snapshot',
-      timestamp: new Date().toISOString(),
+      timestamp: capturedAt,
       metadata: {
         bytes: bytesUsed.toString(),
         gb: (bytesUsed / 1024 / 1024 / 1024).toFixed(2),
@@ -315,7 +340,12 @@ async function updateStorageUsage(customerId: string, bytesUsed: number) {
 }
 
 // Call periodically or after storage changes
-await updateStorageUsage('cus_abc', 5368709120); // 5GB
+await updateStorageUsage(
+  'cus_abc',
+  'snapshot_01K1M4D2K9',
+  5368709120,
+  '2026-08-01T10:30:00Z',
+); // 5GB
 ```
 
 ---
@@ -360,50 +390,53 @@ Usage events trigger webhooks for monitoring and reconciliation. See the `webhoo
 
 ## Common Mistakes
 
-### 1. Reusing Event IDs Across Distinct Events
+### 1. Using Unstable or Reused Event IDs
 
-Each event must have a unique ID. Reusing an ID causes the second event to be silently ignored.
+Generate one ID from the immutable business operation. Reusing an ID for a different operation drops usage, while generating a timestamp or random ID on every retry can bill the same operation twice.
 
 ```typescript
-// WRONG
+// WRONG — a retry creates a new billable event
 await client.usageEvents.ingest({
-  events: [
-    { event_id: 'evt_1', customer_id: 'cus_abc', event_name: 'api.call', ... },
-    { event_id: 'evt_1', customer_id: 'cus_abc', event_name: 'api.call', ... }, // Ignored
-  ]
+  events: [{
+    event_id: `api-call:${Date.now()}:${crypto.randomUUID()}`,
+    customer_id: 'cus_abc',
+    event_name: 'api.call',
+  }],
 });
 
-// CORRECT
+// CORRECT — retry request req_123 with this same ID
 await client.usageEvents.ingest({
-  events: [
-    { event_id: `api_${Date.now()}_1`, customer_id: 'cus_abc', event_name: 'api.call', ... },
-    { event_id: `api_${Date.now()}_2`, customer_id: 'cus_abc', event_name: 'api.call', ... },
-  ]
+  events: [{
+    event_id: 'api-call:req_123',
+    customer_id: 'cus_abc',
+    event_name: 'api.call',
+  }],
 });
 ```
 
-### 2. Blocking User Requests on Event Ingestion
+Do not reuse `api-call:req_123` for a distinct request. This matches credit ledger guidance: a timeout is not permission to generate a fresh idempotency key.
 
-Ingest events asynchronously after the response is sent. Never wait for the ingest call to complete before returning to the user.
+### 2. Using Fire-and-Forget Ingestion
+
+Do not start ingestion after responding without first persisting the event. The process can crash after the user receives success but before usage reaches Dodo.
 
 ```typescript
-// WRONG — blocks the user
+// WRONG — an acknowledged operation can lose its usage event
 app.post('/api/generate', async (req, res) => {
   const result = await generateAI(req.body);
-  await client.usageEvents.ingest({ events: [...] }); // Blocks response
   res.json(result);
+  void client.usageEvents.ingest({ events: [result.usageEvent] });
 });
 
-// CORRECT — fire-and-forget
+// CORRECT — durable persistence completes before success is returned
 app.post('/api/generate', async (req, res) => {
   const result = await generateAI(req.body);
+  await usageOutbox.persist(result.usageEvent);
   res.json(result);
-  
-  // Ingest after response is sent
-  client.usageEvents.ingest({ events: [...] })
-    .catch(err => console.error('Ingest failed:', err));
 });
 ```
+
+A retrying worker ingests the persisted payload with its original `event_id`, as shown in **Track API Calls**. If persistence fails, return an error so the operation can be retried rather than silently underbilling.
 
 ### 3. Clock Skew in Timestamps
 
@@ -451,21 +484,15 @@ const trackUsage = async (eventName: string) => {
   });
 };
 
-// CORRECT — backend route
-app.post('/api/track-usage', async (req, res) => {
-  const { customerId, eventName, metadata } = req.body;
-  
-  await client.usageEvents.ingest({
-    events: [{
-      event_id: `${eventName}_${Date.now()}_${crypto.randomUUID()}`,
-      customer_id: customerId,
-      event_name: eventName,
-      timestamp: new Date().toISOString(),
-      metadata,
-    }]
-  });
-  
-  res.json({ success: true });
+// CORRECT — send the event from a backend worker using its persisted payload
+await client.usageEvents.ingest({
+  events: [{
+    event_id: 'api-call:req_123',
+    customer_id: 'cus_abc',
+    event_name: 'api.call',
+    timestamp: '2026-08-01T10:30:00Z',
+    metadata: { endpoint: '/v1/users' },
+  }],
 });
 ```
 

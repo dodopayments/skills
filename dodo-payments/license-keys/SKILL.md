@@ -36,7 +36,7 @@ License keys authorize access to your digital products. Use them for software li
 
 **Expiry semantics:**
 - One-time-payment keys honor the entitlement duration.
-- Subscription-issued keys have no independent expiry; validity follows subscription state. On hold disables them temporarily; cancellation or expiry disables them permanently.
+- Subscription-issued keys have no independent expiry; validity follows subscription state. On hold disables them temporarily. An immediate cancellation disables them permanently, but when `cancel_at_next_billing_date` is set, keep them active until the subscription reaches the end of its term.
 - Imported keys use nullable `expires_at`; null means perpetual.
 
 ---
@@ -509,6 +509,8 @@ program.parse();
 
 When a product with licensing enabled is purchased, an `entitlement_grant.delivered` webhook fires with the license key details:
 
+Persist a local license-to-subscription association during fulfillment. Cancellation handling must query that association by `subscription_id`; filtering only by customer would also revoke keys for unrelated products or subscriptions.
+
 ```typescript
 // app/api/webhooks/dodo/route.ts
 import { NextRequest, NextResponse } from 'next/server';
@@ -549,14 +551,19 @@ export async function POST(req: NextRequest) {
       await sendLicenseEmail(customer_id, license_key.key);
     }
 
-    if (event.type === 'subscription.cancelled') {
-      const { customer_id } = event.data;
+    if (event.type === 'subscription.cancelled' || event.type === 'subscription.expired') {
+      const { subscription_id, cancel_at_next_billing_date } = event.data;
 
-      // Revoke associated license keys
-      const licenses = await client.licenseKeys.list({ customer_id });
+      // End-of-period cancellation keeps access active until the term expires.
+      if (event.type === 'subscription.cancelled' && cancel_at_next_billing_date) {
+        return NextResponse.json({ received: true });
+      }
 
-      for (const license of licenses.items) {
-        await client.licenseKeys.update(license.id, {
+      // Query your persisted license-to-subscription mapping.
+      const licenseKeyIds = await getLicenseKeyIdsForSubscription(subscription_id);
+
+      for (const licenseKeyId of licenseKeyIds) {
+        await client.licenseKeys.update(licenseKeyId, {
           status: 'disabled',
         });
       }
@@ -575,6 +582,8 @@ export async function POST(req: NextRequest) {
 - `entitlement_grant.delivered` — license key issued (current, recommended)
 - `entitlement_grant.revoked` — license key revoked
 - `license_key.created` — legacy event (still fires, but use `entitlement_grant.*` for new integrations)
+- `subscription.cancelled` — disable only this subscription's keys for immediate cancellation
+- `subscription.expired` — disable this subscription's keys when its term ends
 
 ---
 

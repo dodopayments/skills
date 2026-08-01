@@ -331,12 +331,12 @@ These concern virtual credit entitlements, not monetary wallet balances.
 
 ## Production-Grade Handler Pattern
 
-Respond quickly, process asynchronously, and use idempotency keys:
+Respond quickly after durably recording the event, process asynchronously, and use idempotency keys. If the durable write fails, return a non-`2xx` response so Dodo retries:
 
 ```typescript
 import DodoPayments from 'dodopayments';
 import express from 'express';
-import { Queue } from 'bullmq'; // or your async queue
+import { Queue, Worker } from 'bullmq'; // or your async queue
 
 const app = express();
 app.use(express.raw({ type: 'application/json' }));
@@ -347,10 +347,17 @@ const client = new DodoPayments({
   webhookKey: process.env.DODO_PAYMENTS_WEBHOOK_KEY,
 });
 
-const eventQueue = new Queue('webhook-events');
+type WebhookEvent = ReturnType<typeof client.webhooks.unwrap>;
+type WebhookJob = { event: WebhookEvent; webhookId: string };
+
+const connection = {
+  host: process.env.REDIS_HOST ?? '127.0.0.1',
+  port: Number(process.env.REDIS_PORT ?? '6379'),
+};
+const eventQueue = new Queue<WebhookJob>('webhook-events', { connection });
 
 app.post('/webhook', async (req, res) => {
-  let unwrapped;
+  let unwrapped: WebhookEvent;
   
   try {
     unwrapped = client.webhooks.unwrap(req.body.toString(), {
@@ -364,40 +371,46 @@ app.post('/webhook', async (req, res) => {
     return res.status(401).json({ error: 'Invalid signature' });
   }
   
-  // Respond immediately with 200 OK
-  res.json({ received: true });
-  
-  // Queue for async processing, keyed by webhook-id for idempotency
+  // Durably enqueue before acknowledging, keyed by webhook-id for idempotency
   const webhookId = req.headers['webhook-id'] as string;
-  await eventQueue.add(
-    `process-${unwrapped.type}`,
-    { event: unwrapped, webhookId },
-    { jobId: webhookId } // Prevents duplicate processing
-  );
+  try {
+    await eventQueue.add(
+      `process-${unwrapped.type}`,
+      { event: unwrapped, webhookId },
+      { jobId: webhookId } // Prevents duplicate queue entries
+    );
+    return res.json({ received: true });
+  } catch (error) {
+    console.error('Failed to persist webhook', error);
+    return res.status(503).json({ error: 'Webhook persistence failed' });
+  }
 });
 
-// Async worker
-eventQueue.process(async (job) => {
-  const { event, webhookId } = job.data;
-  
-  // Check if already processed
-  const processed = await db.webhookLog.findUnique({ where: { webhookId } });
-  if (processed) return; // Idempotent: skip
-  
-  // Process based on event type
-  switch (event.type) {
-    case 'payment.succeeded':
-      await handlePaymentSucceeded(event.data);
-      break;
-    case 'subscription.active':
-      await handleSubscriptionActive(event.data);
-      break;
-    // ... handle other events
-  }
-  
-  // Log as processed
-  await db.webhookLog.create({ webhookId, eventType: event.type });
-});
+// Async worker. webhookLog.webhookId must have a unique constraint.
+const worker = new Worker<WebhookJob>(
+  'webhook-events',
+  async (job) => {
+    const { event, webhookId } = job.data;
+
+    // Atomically claim the webhook before any side effects.
+    const claim = await db.webhookLog.createMany({
+      data: [{ webhookId, eventType: event.type }],
+      skipDuplicates: true,
+    });
+    if (claim.count === 0) return;
+
+    switch (event.type) {
+      case 'payment.succeeded':
+        await handlePaymentSucceeded(event.data);
+        break;
+      case 'subscription.active':
+        await handleSubscriptionActive(event.data);
+        break;
+      // ... handle other events
+    }
+  },
+  { connection }
+);
 ```
 
 ---
@@ -409,7 +422,7 @@ Understand how Dodo delivers webhooks:
 | Property | Behavior |
 |----------|----------|
 | **Timeout** | 15 seconds for connection and read |
-| **Success** | Any `2xx` response acknowledges delivery. Return `200` immediately. |
+| **Success** | Any `2xx` response acknowledges delivery. Return `200` immediately after durably recording the event. |
 | **Failure** | Any non-`2xx` response triggers a retry. |
 | **Retries** | Eight attempts: immediately, 5s, 5m, 30m, 2h, 5h, 10h, 10h |
 | **Idempotency** | Use `webhook-id` to detect and skip duplicates |
@@ -440,6 +453,8 @@ If you use a supported framework, use the official adaptor package for built-in 
 
 **Next.js example:**
 
+The adapter callback does not expose `webhook-id`, so this payment example atomically claims `payment_id` before side effects. Use a handler that exposes `webhook-id` for event types without a verified stable identifier.
+
 ```typescript
 // app/api/webhook/dodo-payments/route.ts
 import { Webhooks } from "@dodopayments/nextjs";
@@ -449,18 +464,25 @@ export const POST = Webhooks({
   onPayload: async (payload) => {
     // payload is already verified
     console.log(`Received ${payload.type}`);
-    
-    switch (payload.type) {
-      case 'payment.succeeded':
-        await handlePaymentSucceeded(payload.data);
-        break;
-      case 'subscription.active':
-        await handleSubscriptionActive(payload.data);
-        break;
-    }
+
+    if (payload.type !== 'payment.succeeded') return;
+
+    // webhookLog.webhookId must have a unique constraint.
+    const claim = await db.webhookLog.createMany({
+      data: [{
+        webhookId: payload.data.payment_id,
+        eventType: payload.type,
+      }],
+      skipDuplicates: true,
+    });
+    if (claim.count === 0) return;
+
+    await handlePaymentSucceeded(payload.data);
   },
 });
 ```
+
+Continue to handle `subscription.active` with `handleSubscriptionActive(payload.data)` only in a handler that can first atomically claim its `webhook-id`.
 
 ---
 
@@ -587,16 +609,30 @@ app.post('/webhook', async (req, res) => {
 });
 ```
 
-**Correct:** Respond immediately, queue async work:
+**Correct:** Durably enqueue first, then respond immediately. Return non-`2xx` if persistence fails so Dodo retries:
 ```typescript
 app.post('/webhook', async (req, res) => {
   const unwrapped = client.webhooks.unwrap(...);
-  res.json({ received: true }); // Return now
-  
-  // Queue for async processing
-  await queue.add('process-event', unwrapped);
+
+  try {
+    await queue.add('process-event', unwrapped); // Durable write
+    return res.json({ received: true });
+  } catch (error) {
+    console.error('Failed to persist webhook', error);
+    return res.status(503).json({ error: 'Webhook persistence failed' });
+  }
 });
 ```
+
+### 7. Acknowledging before durable persistence
+
+**Wrong:**
+```typescript
+res.json({ received: true });
+await queue.add('process-event', unwrapped); // A crash can lose an acknowledged event
+```
+
+**Correct:** Verify the signature, durably insert or enqueue the event, and only then return `2xx`. If persistence fails, return non-`2xx` so Dodo retries.
 
 ---
 

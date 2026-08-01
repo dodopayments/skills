@@ -11,8 +11,7 @@ This skill covers integrating Dodo Payments checkout into native and cross-platf
 
 - Building a React Native app with Turbo Module checkout integration
 - Adding checkout to a Flutter app via native bridge
-- Implementing iOS checkout with SFSafariViewController
-- Implementing Android checkout with Chrome Custom Tabs
+- Implementing native iOS or Android checkout with secure browser contexts
 - Registering custom URL schemes and deep links for payment return
 - Handling abandoned checkout sessions and recovery flows
 - Confirming payment authority server-side before granting access
@@ -325,12 +324,24 @@ const client = new DodoPayments({
   environment: 'test_mode',
 });
 
-app.post('/api/mobile-checkout', async (req, res) => {
-  const { customerId, productId } = req.body;
+const MOBILE_PRODUCTS = new Map([
+  ['starter', 'pdt_starter123'],
+  ['pro', 'pdt_pro456'],
+]);
+
+app.post('/api/mobile-checkout', requireAuth, async (req, res) => {
+  const productId = MOBILE_PRODUCTS.get(req.body.plan);
+
+  if (!productId) {
+    return res.status(400).json({ error: 'Invalid plan' });
+  }
+
+  // requireAuth derives this mapping from the authenticated server-side session.
+  const customerId = req.auth.dodoCustomerId;
   
   const session = await client.checkoutSessions.create({
     product_cart: [{ product_id: productId, quantity: 1 }],
-    customer_id: customerId,
+    customer: { customer_id: customerId },
     return_url: 'myapp://checkout/return',
   });
   
@@ -358,7 +369,7 @@ app.post('/webhook', async (req, res) => {
   
   if (event.type === 'payment.succeeded') {
     const paymentId = event.data.payment_id;
-    const customerId = event.data.customer_id;
+    const customerId = event.data.customer.customer_id;
     
     // Grant access to the customer
     await grantAccess(customerId);
