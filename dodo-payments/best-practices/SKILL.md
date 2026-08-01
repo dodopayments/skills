@@ -104,6 +104,8 @@ go get -u github.com/dodopayments/dodopayments-go@v1.110.0
 
 ```go
 import (
+    "os"
+
     "github.com/dodopayments/dodopayments-go"
     "github.com/dodopayments/dodopayments-go/option"
 )

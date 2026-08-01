@@ -130,29 +130,45 @@ This immediately schedules the renewal. If you used the subscription-renewal-fai
 
 ## Webhook testing
 
+The CLI ships separately from the SDKs:
+
+```bash
+npm install -g dodopayments-cli
+dodo login
+```
+
+`dodo login` opens the API Keys page, accepts a pasted key, and asks whether it is Test Mode or Live Mode. One key of each can stay authenticated at the same time.
+
 ### Listen for webhooks locally
 
-The Dodo CLI provides a tunnel to receive webhooks on your local machine:
-
 ```bash
-dodo wh listen
+dodo wh listen http://localhost:3000/webhook
 ```
 
-This starts a local server and prints a webhook URL. Use that URL in your dashboard webhook configuration during development.
+This forwards real test-mode events to your local URL over an outbound relay. It is **not** a tunnel: nothing listens publicly and no URL is printed for you to paste into the dashboard. If you need a registerable HTTPS URL, use ngrok instead — that flow is described in the `webhook-integration` skill.
 
-### Trigger test webhook events
+Two constraints to know before running it:
 
-Send a test webhook event without making a real payment:
+- **A Test Mode key is required.** Live Mode keys are not supported by the listen flow.
+- **The URL argument is required in direct mode.** Bare `dodo wh listen` only works inside the interactive TUI as `/wh listen`, which opens a wizard.
+
+Events arriving this way carry valid signatures, so verify them normally with `webhooks.unwrap()`.
+
+### Trigger mock webhook events
 
 ```bash
-dodo wh trigger
+dodo wh trigger payment.success http://localhost:3000/webhook
 ```
 
-This prompts you to select an event type and sends it to your configured webhook endpoint. Useful for testing your webhook handler before going live.
+Sends a realistic mock payload for a chosen event. It runs offline and works even while logged out — which is the tell for the part that matters: **these payloads are unsigned.** `unwrap()` rejects them because there is no valid signature to verify.
+
+Use `unsafeUnwrap()` for triggered events only, and never on an endpoint that also receives real traffic. Event names are `<category>.<event>`, for example `payment.success`, `subscription.active`, or `dispute.opened`.
+
+As with `listen`, both arguments are required in direct mode; `/wh trigger` inside the TUI opens a wizard instead.
 
 ### Webhook signature verification
 
-Webhook signature verification is covered in the `webhook-integration` skill. Always verify signatures in production, even in test mode.
+Covered in the `webhook-integration` skill. Verify every webhook that arrives over the network, in test mode as well as live. The single exception is the unsigned payloads produced by `dodo wh trigger` above.
 
 ---
 

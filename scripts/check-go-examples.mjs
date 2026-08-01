@@ -102,6 +102,12 @@ func main() {}
  * analogue of the TS preamble's `any` declarations. `_ = ctx` / `_ = client`
  * likewise silence the case where a block touches neither.
  */
+/** Stdlib qualifiers a skill might use; see the `undefined:` filter below. */
+const GO_STDLIB = new Set([
+	'os', 'io', 'http', 'time', 'context', 'fmt', 'json', 'errors',
+	'strings', 'strconv', 'bytes', 'log', 'sql', 'url',
+]);
+
 const FIXED_IMPORTS = `import (
 	"io"
 	"net/http"
@@ -222,6 +228,38 @@ function hoistImports(code) {
 }
 
 /**
+ * Index of the last line belonging to the block's own import declaration, or -1
+ * when it has none.
+ *
+ * Blocks that ship an import group are compiled with THAT group, not a
+ * substituted superset. Blanking it and prepending a known-good set validated
+ * the statements while silently excusing the snippet's own imports - so a
+ * quick-start could call `os.Getenv` without importing `os`, fail the moment a
+ * reader pasted it, and still be reported clean.
+ */
+function findImportEnd(lines) {
+    let end = -1;
+    let inGroup = false;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (inGroup) {
+            end = i;
+            if (/^\s*\)\s*$/.test(line)) inGroup = false;
+            continue;
+        }
+        if (/^\s*import\s*\(\s*$/.test(line)) {
+            inGroup = true;
+            end = i;
+            continue;
+        }
+        if (/^\s*import\s+(?:[\w.]+\s+)?["`][^"`]+["`]\s*$/.test(line)) {
+            end = i;
+        }
+    }
+    return end;
+}
+
+/**
  * Does the block open with a top-level declaration (func/type/const/var/package)
  * as its first non-blank, non-import line? Such blocks are near-complete files
  * and go straight into the file body. Everything else is a statement fragment
@@ -263,11 +301,48 @@ function main() {
         const rel = `dodo-payments/${dir}/SKILL.md`;
         const md = readFileSync(join(SKILLS_DIR, dir, 'SKILL.md'), 'utf8');
         for (const b of extractBlocks(md)) {
-            const body = hoistImports(b.code);
             const name = `case_${String(n).padStart(4, '0')}.go`;
+            const srcLines = b.code.split('\n');
+            const impEnd = findImportEnd(srcLines);
+            const ownImports = impEnd >= 0;
 
             let header;
             let footer;
+            let body;
+
+            if (ownImports) {
+                // Compile the snippet's OWN imports. Nothing is substituted, so
+                // a missing or bogus import is a real failure here.
+                header = 'package main\n\n';
+                const after = srcLines.slice(impEnd + 1).join('\n');
+                if (isFileScope(after)) {
+                    body = b.code;
+                    footer = '\n';
+                } else {
+                    // Statements need a function, but the opener must sit after
+                    // the imports. Consume the blank line that conventionally
+                    // follows the group so the body keeps its original line
+                    // count and the mapping stays a single fixed offset.
+                    const opener = `func case${String(n).padStart(4, '0')}() {`;
+                    const blank = srcLines.findIndex((l, i) => i > impEnd && !l.trim());
+                    const copy = [...srcLines];
+                    if (blank !== -1) copy[blank] = opener;
+                    else copy.splice(impEnd + 1, 0, opener);
+                    body = copy.join('\n');
+                    footer = '\n}\n';
+                }
+                writeFileSync(join(WORK, name), `${header}${body}${footer}`);
+                index.set(name, {
+                    file: rel,
+                    startLine: b.startLine,
+                    offset: header.split('\n').length - 1,
+                    ownImports: true,
+                });
+                n++;
+                continue;
+            }
+
+            body = hoistImports(b.code);
             if (isFileScope(body)) {
                 // Near-complete file (own funcs/types). Drop it in verbatim after
                 // the fixed imports; the block's declarations are just more
@@ -291,6 +366,7 @@ function main() {
                 // leave blank lines behind, so the body is line-for-line the
                 // same as the original block and no further correction applies.
                 offset: header.split('\n').length - 1,
+                ownImports: false,
             });
             n++;
         }
@@ -328,8 +404,11 @@ function main() {
     const tidyOut = (tidy.stdout || '') + (tidy.stderr || '');
     if (tidy.status !== 0 || !existsSync(join(WORK, 'go.sum'))) {
         console.error(
-            `FATAL: could not resolve ${SDK_MODULE} ${SDK_VERSION}, so no SDK types were checked.\n` +
-            'Ensure the module is available (in the Go module cache or reachable for download).\n' +
+            'FATAL: `go mod tidy` failed, so nothing was type-checked.\n' +
+            `Usually ${SDK_MODULE} ${SDK_VERSION} is unavailable (not in the module\n` +
+            'cache and not reachable). It can also mean a SKILL.md import group names a\n' +
+            'package that does not exist - check the resolver output below before\n' +
+            'assuming the SDK is at fault.\n' +
             'Refusing to report a passing run.\n\n' +
             tidyOut.trim(),
         );
@@ -390,14 +469,20 @@ function main() {
         if (undef) {
             const sym = undef[1];
             const isSdk = /^(dodopayments|option|param|ctx|client)\b/.test(sym) || /^dodopayments\./.test(sym);
-            if (!isSdk) continue;
+            // When the block ships its own imports, a bare stdlib qualifier means
+            // the published snippet forgot to import it - the exact defect that
+            // substituting a known-good import set used to conceal.
+            const isMissingStdlib = meta.ownImports && GO_STDLIB.has(sym.split('.')[0]);
+            if (!isSdk && !isMissingStdlib) continue;
         }
 
         // Unused locals/imports are artifacts of compiling a fragment in
         // isolation, never an SDK-shape error. Wrong SDK usage never shows up
         // as "declared and not used".
         if (/declared and not used/.test(entry.message)) continue;
-        if (/imported and not used/.test(entry.message)) continue;
+        // Only excusable when WE supplied the imports. When the block ships its
+        // own group, an unused import is a defect in the published snippet.
+        if (!meta.ownImports && /imported and not used/.test(entry.message)) continue;
 
         // Deduplicate: pass 1 and pass 2 overlap.
         if (diags.some((d) => d.file === entry.file && d.line === entry.line && d.message === entry.message)) continue;

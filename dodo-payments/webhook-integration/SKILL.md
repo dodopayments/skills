@@ -546,20 +546,20 @@ Handle `subscription.active` only in a handler that exposes `webhook-id`, then c
 Forward real test-mode events to localhost:
 
 ```bash
-dodo wh listen
+dodo wh listen http://localhost:3000/webhook
 ```
 
-This creates a test webhook, opens a WebSocket relay, and forwards events with valid signatures to your local URL. Requires a test-mode API key.
+This creates a test webhook, opens a WebSocket relay, and forwards events with valid signatures to your local URL. Requires a test-mode API key. The URL argument is required in direct mode — bare `dodo wh listen` only works as `/wh listen` inside the TUI.
 
 ### CLI: Unsigned mock events
 
 Generate realistic unsigned payloads for testing without signature verification:
 
 ```bash
-dodo wh trigger
+dodo wh trigger payment.success http://localhost:3000/webhook
 ```
 
-Use `unsafeUnwrap()` only for these unsigned payloads.
+Use `unsafeUnwrap()` only for these unsigned payloads. Both arguments are required in direct mode.
 
 ### Tunnel
 
