@@ -272,7 +272,7 @@ When a renewal or plan-change charge fails, the subscription moves to `on_hold`.
 // Listen for subscription.on_hold webhook
 case 'subscription.on_hold':
   // Notify customer, offer payment method update
-  await sendPaymentFailedEmail(data.customer_id);
+  await sendPaymentFailedEmail(data.customer.customer_id);
   break;
 ```
 
@@ -331,6 +331,8 @@ Webhook signature verification, raw-body handling, durable processing, and idemp
 ### Example Handler
 
 ```typescript
+import { NextRequest, NextResponse } from 'next/server';
+
 export async function POST(req: NextRequest) {
   const raw = await req.text();
   const headers = Object.fromEntries(req.headers.entries());
@@ -348,24 +350,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ received: true });
   }
 
-  const data = event.data;
-
   switch (event.type) {
     case 'subscription.active':
-      await grantAccess(data.customer_id, data.product_id);
+      await grantAccess(event.data.customer.customer_id, event.data.product_id);
       break;
     case 'subscription.on_hold':
-      await notifyPaymentFailed(data.customer_id);
+      await notifyPaymentFailed(event.data.customer.customer_id);
       break;
     case 'subscription.cancelled':
-      if (data.cancel_at_next_billing_date) {
-        await scheduleAccessRevocation(data.subscription_id, new Date(data.next_billing_date));
+      if (event.data.cancel_at_next_billing_date) {
+        await scheduleAccessRevocation(event.data.subscription_id, new Date(event.data.next_billing_date));
       } else {
-        await revokeAccessImmediately(data.subscription_id);
+        await revokeAccessImmediately(event.data.subscription_id);
       }
       break;
     case 'subscription.expired':
-      await revokeAccess(data.customer_id);
+      await revokeAccess(event.data.customer.customer_id);
       break;
   }
 
@@ -415,7 +415,7 @@ The `return_url` is hit before the subscription is fully created. Dodo may still
 ```typescript
 // In webhook handler
 case 'subscription.active':
-  await grantAccess(data.customer_id);
+  await grantAccess(data.customer.customer_id);
   break;
 ```
 
@@ -446,6 +446,8 @@ const session = await client.checkoutSessions.create({
 
 ### 4. Forgetting Proration Mode
 
+**Wrong:**
+
 ```typescript
 // Missing proration_billing_mode
 await client.subscriptions.changePlan('sub_xxxxx', {
@@ -465,7 +467,7 @@ This will fail. Always specify a proration mode.
 
 ```typescript
 // Wrong: revoke immediately
-await revokeAccess(data.customer_id);
+await revokeAccess(data.customer.customer_id);
 
 // Right: check the flag
 if (data.cancel_at_next_billing_date) {

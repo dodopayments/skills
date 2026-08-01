@@ -72,9 +72,13 @@ console.log('Redirect to:', session.checkout_url);
 
 Response fields:
 - `session_id`: Unique checkout session ID
-- `checkout_url`: Hosted checkout URL (redirect customer here)
+- `checkout_url`: Hosted checkout URL (redirect customer here). Nullable when `confirm=true`
 - `client_secret`: Present only if `confirm=true`
+- `publishable_key`: Present only if `confirm=true`. Pair it with `client_secret` for the inline SDK flow
 - `payment_id`: Present only if `confirm=true`
+
+`publishable_key` is a per-session value returned for confirm-mode inline checkout. It is not a Stripe-style
+publishable *API key* — Dodo issues no such credential, and every API key is secret and server-side only.
 
 ### With Multiple Products
 
@@ -710,8 +714,8 @@ Supported parameters:
 ```typescript
 const status = await client.checkoutSessions.retrieve('cks_session_id');
 
-console.log(status.session_id);
-console.log(status.checkout_url);
+console.log(status.id);
+console.log(status.payment_status);
 ```
 
 ### Preview Session (without creating)

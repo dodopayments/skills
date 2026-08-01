@@ -93,6 +93,28 @@ Skills are automatically available when configured in your OpenCode settings.
 
 Skills are reusable capabilities for AI agents. They provide procedural knowledge that helps agents accomplish specific tasks more effectively. Think of them as plugins that enhance what your AI agent can do when working with Dodo Payments.
 
+## Contributing
+
+Skills are pasted verbatim into an agent's context and reproduced as-is, so a wrong field name propagates
+exactly as reliably as correct code — and usually fails *silently* rather than loudly. Two checks run in CI
+and should be run locally before opening a PR:
+
+```bash
+npm install
+npm run check      # validate + typecheck
+```
+
+**`npm run validate`** enforces structural rules: real API hostnames, correct `dodo_test_`/`dodo_live_` key
+formats, no hand-rolled webhook HMAC, no deprecated SDK calls, no type suppression, and agreement between
+each skill's directory name, its frontmatter, `marketplace.json`, and the README table.
+
+**`npm run typecheck`** extracts every TypeScript block from every `SKILL.md` and compiles it against the
+real `dodopayments` types. This is what catches wrong field and parameter names. Blocks introduced as
+deliberate counter-examples (`Wrong:`, `Incorrect:`) are skipped, since they are supposed to be wrong.
+
+When you add or change an example, prefer fixing the field name over casting to `any` — the point of the
+check is that the published example actually compiles.
+
 ## Resources
 
 - [Dodo Payments Documentation](https://docs.dodopayments.com)

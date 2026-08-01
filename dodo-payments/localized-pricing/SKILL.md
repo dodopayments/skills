@@ -98,14 +98,17 @@ console.log(prices);
 ### Retrieve a specific localized price
 
 ```typescript
-const price = await client.products.localizedPrices.retrieve('pdt_premium_plan', 'lp_abc123');
+const price = await client.products.localizedPrices.retrieve('lp_abc123', {
+  product_id: 'pdt_premium_plan',
+});
 console.log(price.amount, price.currency, price.country_code);
 ```
 
 ### Update a localized price
 
 ```typescript
-await client.products.localizedPrices.update('pdt_premium_plan', 'lp_abc123', {
+await client.products.localizedPrices.update('lp_abc123', {
+  product_id: 'pdt_premium_plan',
   amount: 109900, // Update to ₹1099.00
 });
 ```
@@ -113,7 +116,9 @@ await client.products.localizedPrices.update('pdt_premium_plan', 'lp_abc123', {
 ### Archive a localized price
 
 ```typescript
-await client.products.localizedPrices.archive('pdt_premium_plan', 'lp_abc123');
+await client.products.localizedPrices.archive('lp_abc123', {
+  product_id: 'pdt_premium_plan',
+});
 ```
 
 Archived prices are soft-deleted. They no longer apply to new checkouts but remain in your history.
@@ -144,7 +149,7 @@ Adaptive currency is also available on subscription creation and plan changes. C
 
 Dodo resolves the customer's billing country and currency in this order:
 
-1. Explicit `billing_country` or `billing_currency` passed to checkout.
+1. Explicit `billing_address.country` or `billing_currency` passed to checkout.
 2. Customer's stored address (if the customer exists in Dodo).
 3. IP geolocation (if available).
 4. Fallback to your product's base price and currency.

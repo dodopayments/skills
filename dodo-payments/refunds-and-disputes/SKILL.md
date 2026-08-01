@@ -48,14 +48,14 @@ console.log(refund.status); // 'pending', 'succeeded', 'review', or 'failed'
 
 ### Partial refund by item
 
-To refund only specific items from a payment, pass the `items` array with the item IDs and quantities you want to refund:
+To refund only specific items from a payment, pass the `items` array with each item ID and the amount to refund in the smallest currency unit. Omit `amount` to refund the whole item:
 
 ```typescript
 const partialRefund = await client.refunds.create({
   payment_id: 'pay_abc123',
   items: [
-    { item_id: 'item_1', quantity: 1 },
-    { item_id: 'item_2', quantity: 2 },
+    { item_id: 'item_1', amount: 1000 },
+    { item_id: 'item_2', amount: 2500 },
   ],
 });
 ```
@@ -75,9 +75,7 @@ Each refund has one of four statuses:
 
 ```typescript
 // List all refunds
-const refunds = await client.refunds.list({
-  payment_id: 'pay_abc123',
-});
+const refunds = await client.refunds.list();
 
 // Retrieve a specific refund
 const refund = await client.refunds.retrieve('ref_xyz789');
@@ -95,9 +93,14 @@ import express from 'express';
 const app = express();
 app.use(express.raw({ type: 'application/json' }));
 
+// `environment` is a narrow union, but env vars are `string | undefined`.
+// Narrow explicitly rather than casting, and default to test mode so a missing
+// variable can never accidentally hit live.
+const environment = process.env.DODO_PAYMENTS_ENVIRONMENT === 'live_mode' ? 'live_mode' : 'test_mode';
+
 const client = new DodoPayments({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT,
+  environment,
   webhookKey: process.env.DODO_PAYMENTS_WEBHOOK_KEY,
 });
 
@@ -114,14 +117,14 @@ app.post('/webhook', async (req, res) => {
     if (event.type === 'refund.succeeded') {
       const refund = event.data;
       // Refund succeeded; revoke access if needed
-      await revokeCustomerAccess(refund.customer_id);
+      await revokeCustomerAccess(refund.customer.customer_id);
       await updateRefundRecord(refund.refund_id, 'succeeded');
     }
 
     if (event.type === 'refund.failed') {
       const refund = event.data;
       // Refund failed; keep access active, alert support
-      await logRefundFailure(refund.refund_id, refund.failure_reason);
+      await logRefundFailure(refund.refund_id, refund.reason);
     }
 
     res.json({ received: true });
@@ -143,7 +146,7 @@ const disputes = await client.disputes.list();
 
 // Retrieve a specific dispute
 const dispute = await client.disputes.retrieve('dis_abc123');
-console.log(dispute.status);
+console.log(dispute.dispute_status);
 console.log(dispute.amount); // in smallest currency unit
 ```
 
@@ -163,7 +166,14 @@ A dispute moves through seven events. Each event requires a different action fro
 
 ### Handle dispute webhooks
 
+Webhook dispute payloads intentionally contain no customer field. Resolve the customer with an extra `disputes.retrieve()` call: the webhook's `dispute_id` identifies the dispute, and the returned `GetDispute` includes `customer`. Without this lookup, access-control handlers would receive `undefined`.
+
 ```typescript
+async function resolveDisputeCustomerId(disputeId: string) {
+  const dispute = await client.disputes.retrieve(disputeId);
+  return dispute.customer.customer_id;
+}
+
 app.post('/webhook', async (req, res) => {
   try {
     const event = client.webhooks.unwrap(req.body.toString(), {
@@ -178,7 +188,8 @@ app.post('/webhook', async (req, res) => {
       const dispute = event.data;
       // Record the dispute and revoke access
       await recordDispute(dispute.dispute_id, dispute.payment_id, dispute.amount);
-      await revokeCustomerAccess(dispute.customer_id);
+      const customerId = await resolveDisputeCustomerId(dispute.dispute_id);
+      await revokeCustomerAccess(customerId);
       // Gather evidence from your system and submit via dashboard
       // (no evidence-submission API exists; use the Dodo dashboard)
     }
@@ -187,7 +198,8 @@ app.post('/webhook', async (req, res) => {
       const dispute = event.data;
       // Funds retained; restore normal state
       await markDisputeResolved(dispute.dispute_id, 'won');
-      await restoreCustomerAccess(dispute.customer_id);
+      const customerId = await resolveDisputeCustomerId(dispute.dispute_id);
+      await restoreCustomerAccess(customerId);
     }
 
     if (event.type === 'dispute.lost') {
@@ -228,33 +240,41 @@ When a dispute opens, gather your evidence (order confirmation, delivery proof, 
 A common pattern for managing access during disputes:
 
 ```typescript
-async function handleDisputeLifecycle(dispute) {
-  switch (dispute.status) {
-    case 'opened':
+async function handleDisputeLifecycle(
+  dispute: Awaited<ReturnType<typeof client.disputes.retrieve>>,
+) {
+  const customerId = dispute.customer.customer_id;
+
+  switch (dispute.dispute_status) {
+    case 'dispute_opened':
       // Revoke access immediately
-      await revokeCustomerAccess(dispute.customer_id);
+      await revokeCustomerAccess(customerId);
       break;
 
-    case 'won':
+    case 'dispute_won':
       // You won; restore access
-      await restoreCustomerAccess(dispute.customer_id);
+      await restoreCustomerAccess(customerId);
       break;
 
-    case 'lost':
+    case 'dispute_lost':
       // You lost; keep access revoked
       // (do nothing)
       break;
 
-    case 'accepted':
+    case 'dispute_accepted':
       // You conceded; funds go to the cardholder and access stays revoked
       break;
 
-    case 'cancelled':
+    case 'dispute_cancelled':
       // Cancellation is not a win; reconcile separately and keep access revoked
       break;
 
-    case 'expired':
+    case 'dispute_expired':
       // Treat as lost; keep access revoked
+      break;
+
+    case 'dispute_challenged':
+      // Evidence is under review; keep access revoked
       break;
   }
 }
@@ -274,7 +294,11 @@ async function reconcileRefund(refund) {
   const customer = payment.customer;
 
   // Revoke access for non-refundable products
-  if (isNonRefundable(payment.product_id)) {
+  const includesNonRefundableProduct = payment.product_cart?.some(({ product_id }) =>
+    isNonRefundable(product_id),
+  );
+
+  if (includesNonRefundableProduct) {
     await revokeCustomerAccess(customer.customer_id);
   }
 

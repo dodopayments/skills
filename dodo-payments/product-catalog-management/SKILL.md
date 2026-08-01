@@ -20,7 +20,7 @@ This skill covers the full product lifecycle: creating products with pricing mod
 **Product model:** Every product has exactly one pricing model selected at creation. The three models are:
 
 - `one_time_price`: charge once per purchase.
-- `recurring_price`: charge on a billing cycle (daily, weekly, monthly, yearly).
+- `recurring_price`: charge on a configurable payment frequency and subscription period.
 - `usage_based_price`: charge per unit consumed (see `usage-based-billing` skill for meter setup).
 
 Pricing is nested inside the product object. There is no separate top-level Price resource.
@@ -32,7 +32,7 @@ Pricing is nested inside the product object. There is no separate top-level Pric
 - `price`: amount in the smallest currency unit (cents for USD).
 - `discount`: optional discount amount in the same unit.
 
-**Tax category:** Required at product creation. Dodo uses this to calculate and collect sales tax. Common values include `digital_products`, `physical_goods`, `services`. Consult your tax jurisdiction or the Dodo dashboard for the full list.
+**Tax category:** Required at product creation. Dodo uses this to calculate and collect sales tax. Supported values are `digital_products`, `saas`, `e_book`, and `edtech`.
 
 **Lifecycle:** Products support `list`, `retrieve`, `update`, and `archive`/`unarchive`. There is no delete endpoint. Archived products remain in your history but don't appear in new checkouts.
 
@@ -61,10 +61,11 @@ const product = await client.products.create({
     currency: 'USD',
     price: 9900, // $99.00
     discount: 0,
+    purchasing_power_parity: false,
   },
 });
 
-console.log(product.id); // pdt_...
+console.log(product.product_id); // pdt_...
 ```
 
 For recurring products, specify the billing cycle:
@@ -72,13 +73,17 @@ For recurring products, specify the billing cycle:
 ```typescript
 const subscription = await client.products.create({
   name: 'Premium Plan',
-  tax_category: 'services',
+  tax_category: 'saas',
   price: {
     type: 'recurring_price',
     currency: 'USD',
     price: 2999, // $29.99/month
     discount: 0,
-    billing_cycle: 'monthly',
+    payment_frequency_count: 1,
+    payment_frequency_interval: 'Month',
+    subscription_period_count: 1,
+    subscription_period_interval: 'Month',
+    purchasing_power_parity: false,
   },
 });
 ```
@@ -88,7 +93,7 @@ This skill is the canonical source for product creation request shapes. For a us
 ```typescript
 const metered = await client.products.create({
   name: 'API Calls',
-  tax_category: 'services',
+  tax_category: 'saas',
   price: {
     type: 'usage_based_price',
     currency: 'USD',
@@ -157,7 +162,7 @@ import fs from 'node:fs';
 
 // Request a presigned upload URL
 const uploadUrl = await client.products.images.update('pdt_pro_bundle', {
-  filename: 'product.png',
+  force_update: true,
 });
 
 // Upload immediately (within 60 seconds)
@@ -180,19 +185,13 @@ Add-ons are optional extras customers can purchase alongside a product. Create t
 // Create an add-on
 const addon = await client.addons.create({
   name: 'Priority Support',
-  tax_category: 'services',
-  price: {
-    type: 'one_time_price',
-    currency: 'USD',
-    price: 4900, // $49.00
-    discount: 0,
-  },
+  tax_category: 'saas',
+  currency: 'USD',
+  price: 4900, // $49.00
 });
 
 // Upload an image for the add-on
-const addonImageUrl = await client.addons.images.update(addon.id, {
-  filename: 'addon.png',
-});
+const addonImageUrl = await client.addons.updateImages(addon.id);
 
 // List add-ons
 const addons = await client.addons.list();
@@ -207,14 +206,23 @@ Group products into collections for themed checkouts. Collections have nested gr
 const collection = await client.productCollections.create({
   name: 'Starter Bundle',
   description: 'Everything you need to get started',
+  groups: [
+    {
+      group_name: 'Core Tools',
+      products: [
+        { product_id: 'pdt_tool_a' },
+        { product_id: 'pdt_tool_b' },
+      ],
+    },
+  ],
 });
 
-// Add groups and items
+// Add another group later
 await client.productCollections.groups.create(collection.id, {
-  name: 'Core Tools',
-  items: [
-    { product_id: 'pdt_tool_a', quantity: 1 },
-    { product_id: 'pdt_tool_b', quantity: 1 },
+  group_name: 'Optional Tools',
+  products: [
+    { product_id: 'pdt_tool_c' },
+    { product_id: 'pdt_tool_d' },
   ],
 });
 
@@ -236,24 +244,30 @@ Entitlements grant customers access to downloadable files. Create an entitlement
 // Create an entitlement
 const entitlement = await client.entitlements.create({
   name: 'Pro Bundle Files',
+  integration_type: 'digital_files',
+  integration_config: {
+    digital_file_ids: [],
+  },
 });
 
-// Upload a file
-await client.entitlements.files.upload(entitlement.id, {
-  file: fs.createReadStream('./pro-bundle.zip'),
-  filename: 'pro-bundle.zip',
+// Upload and attach a file; the response identifies the attached file
+const { file_id } = await client.entitlements.files.upload(entitlement.id);
+
+// Attach the entitlement to a product
+await client.products.update('pdt_pro_bundle', {
+  entitlements: [{ entitlement_id: entitlement.id }],
 });
 
-// Grant access to a customer
-await client.entitlements.grants.create(entitlement.id, {
-  customer_id: 'cus_customer_123',
-});
+// A grant is produced by fulfillment when the customer purchases the product.
+// Grants can be listed, revoked, or fulfilled with a manually managed license key;
+// they cannot be created directly through the SDK.
 
 // List grants for a customer
 const grants = await client.customers.listEntitlementGrants('cus_customer_123');
 
 // Generate a download URL (valid for roughly 15 minutes)
-const downloadUrl = grants[0].download_url;
+const grant = grants.items[0];
+const downloadUrl = grant?.digital_product_delivery?.files[0]?.download_url;
 ```
 
 ## Short links

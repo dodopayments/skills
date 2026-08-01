@@ -1,0 +1,21 @@
+{
+    "name": "@dodopayments/skills",
+    "private": true,
+    "version": "2.0.0",
+    "description": "Official Dodo Payments agent skills. Tooling only - the skills themselves are the SKILL.md files.",
+    "type": "module",
+    "scripts": {
+        "validate": "node scripts/validate-skills.mjs .",
+        "typecheck": "node scripts/typecheck-examples.mjs",
+        "check": "npm run validate && npm run typecheck"
+    },
+    "devDependencies": {
+        "dodopayments": "^2.44.0",
+        "typescript": "^5.6.0"
+    },
+    "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/dodopayments/skills.git"
+    }
+}

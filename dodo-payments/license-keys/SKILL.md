@@ -142,7 +142,7 @@ async function listCustomerKeys(customerId: string) {
     key: key.key,
     status: key.status,
     expiresAt: key.expires_at,
-    activationsUsed: key.activations_used,
+    activationsUsed: key.instances_count,
     activationsLimit: key.activations_limit,
   }));
 }
@@ -158,7 +158,7 @@ console.log({
   key: key.key,
   status: key.status,
   expiresAt: key.expires_at,
-  activationsUsed: key.activations_used,
+  activationsUsed: key.instances_count,
   activationsLimit: key.activations_limit,
 });
 ```
@@ -168,7 +168,7 @@ console.log({
 ```typescript
 // Disable a key or adjust its activation limit
 await client.licenseKeys.update('lk_abc123', {
-  status: 'disabled',
+  disabled: true,
   // or adjust activations_limit
   activations_limit: 10,
 });
@@ -179,6 +179,7 @@ await client.licenseKeys.update('lk_abc123', {
 ```typescript
 const newKey = await client.licenseKeys.create({
   customer_id: 'cus_abc123',
+  key: 'PREMIUM-AAAA-BBBB-CCCC',
   product_id: 'pdt_abc123',
   activations_limit: 5,
   expires_at: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString(),
@@ -533,12 +534,17 @@ export async function POST(req: NextRequest) {
     });
 
     if (event.type === 'entitlement_grant.delivered') {
-      const { customer_id, license_key, external_id } = event.data;
+      const { customer_id, id, license_key } = event.data;
+
+      // Delivered grants for other entitlement types do not include a license key.
+      if (!license_key) {
+        return NextResponse.json({ received: true });
+      }
 
       // Store in your database
       await prisma.license.create({
         data: {
-          externalId: external_id,
+          externalId: id,
           key: license_key.key,
           customerId: customer_id,
           expiresAt: license_key.expires_at ? new Date(license_key.expires_at) : null,
@@ -564,7 +570,7 @@ export async function POST(req: NextRequest) {
 
       for (const licenseKeyId of licenseKeyIds) {
         await client.licenseKeys.update(licenseKeyId, {
-          status: 'disabled',
+          disabled: true,
         });
       }
     }

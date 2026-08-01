@@ -574,7 +574,7 @@ Return an application-level payment/credit-required response with a top-up or up
 2. **Calling invented balance methods.** Use `balances.retrieve(customerId, { credit_entitlement_id })`, not `balances.get(creditId, customerId)`.
 3. **Using the wrong ledger argument order.** `createLedgerEntry` receives `customerId` first; `credit_entitlement_id` belongs in the request object.
 4. **Using `type` or `description` for adjustments.** Confirmed fields are `entry_type` and `reason`.
-5. **Calling an unverified grants method.** No `creditEntitlements.balances.listGrants(...)` call is established here. Use the balance/ledger APIs or `customers.listCreditEntitlements(customerID)` for the confirmed customer-level read.
+5. **Getting the grants argument order wrong.** `creditEntitlements.balances.listGrants(customerID, params)` does exist and takes the customer id first, with the entitlement supplied in the params object. It returns a paginated page, so read `.items` rather than treating the result as an array. Use `customers.listCreditEntitlements(customerID)` when you want the customer-level summary instead.
 6. **Treating `available_balance` as the balance API field.** The confirmed balance response uses `balance` and `overage`; `available_balance` belongs to the dedicated low-balance webhook payload.
 7. **Choosing precision casually.** It supports `0–10` for custom units and cannot be changed after creation.
 8. **Using JavaScript floating point for credits.** API amounts are decimal strings. Preserve them as strings or use decimal arithmetic.

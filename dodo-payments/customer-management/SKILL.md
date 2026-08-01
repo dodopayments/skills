@@ -49,11 +49,11 @@ const customer = await client.customers.create({
     tier: 'premium',
   },
 });
-console.log(customer.id); // cus_...
+console.log(customer.customer_id); // cus_...
 
 // List customers
 const customers = await client.customers.list({
-  limit: 10,
+  page_size: 10,
 });
 
 // Retrieve a customer
@@ -95,7 +95,10 @@ List and delete payment methods saved to a customer.
 ```typescript
 // List payment methods for a customer
 const methods = await client.customers.retrievePaymentMethods('cus_abc123');
-console.log(methods); // array of payment method objects
+console.log(methods);
+// {
+//   items: [{ payment_method_id: 'pm_xyz789', payment_method: 'card' }]
+// }
 
 // Delete a payment method
 await client.customers.deletePaymentMethod('pm_xyz789', {
@@ -113,14 +116,17 @@ Wallets hold real-money balances (USD, INR) that customers can spend on future p
 // List wallets for a customer
 const wallets = await client.customers.wallets.list('cus_abc123');
 console.log(wallets);
-// [
-//   { currency: 'USD', balance: 5000 },  // $50.00
-//   { currency: 'INR', balance: 100000 } // ₹1000.00
-// ]
+// {
+//   items: [
+//     { currency: 'USD', balance: 5000, customer_id: 'cus_abc123', ... },
+//     { currency: 'INR', balance: 100000, customer_id: 'cus_abc123', ... }
+//   ],
+//   total_balance_usd: 17000
+// }
 
 // List ledger entries
 const entries = await client.customers.wallets.ledgerEntries.list('cus_abc123', {
-  limit: 20,
+  page_size: 20,
 });
 
 // Create a ledger entry (credit or debit)
@@ -146,26 +152,46 @@ Entitlements are feature or file grants. There are three methods:
 // List credit entitlements (credit balances)
 const credits = await client.customers.listCreditEntitlements('cus_abc123');
 console.log(credits);
-// [
-//   { id: 'ent_credit_1', balance: 5000, currency: 'USD' }
-// ]
+// {
+//   items: [{
+//     credit_entitlement_id: 'cred_ent_1',
+//     balance: '5000',
+//     name: 'API Calls',
+//     overage: '0',
+//     unit: 'calls'
+//   }]
+// }
 
 // List feature/file entitlements
 const features = await client.customers.listEntitlements('cus_abc123');
 console.log(features);
-// [
-//   { id: 'ent_feature_1', name: 'Pro Features', type: 'feature' },
-//   { id: 'ent_file_1', name: 'Pro Bundle', type: 'file' }
-// ]
+// {
+//   items: [
+//     {
+//       grant_id: 'entg_feature_1',
+//       entitlement_id: 'ent_feature_1',
+//       entitlement_name: 'Pro Features',
+//       integration_type: 'feature_flag',
+//       status: 'delivered',
+//       created_at: '2026-01-01T00:00:00Z',
+//       updated_at: '2026-01-01T00:00:00Z'
+//     }
+//   ]
+// }
 
 // List individual grants (with revocation status)
 const grants = await client.customers.listEntitlementGrants('cus_abc123', {
   page_size: 50,
 });
 console.log(grants);
-// [
-//   { id: 'grant_1', entitlement_id: 'ent_feature_1', revoked: false }
-// ]
+// {
+//   items: [{
+//     id: 'entg_feature_1',
+//     entitlement_id: 'ent_feature_1',
+//     status: 'Delivered',
+//     revoked_at: null
+//   }]
+// }
 ```
 
 ## Linking Your App's Users to Dodo Customers
@@ -178,7 +204,7 @@ const customer = await client.customers.create({
   email: user.email,
   name: user.name,
 });
-await db.users.update(user.id, { dodo_customer_id: customer.id });
+await db.users.update(user.id, { dodo_customer_id: customer.customer_id });
 
 // Option 2: Use metadata to store your user ID
 const customer = await client.customers.create({
@@ -191,8 +217,8 @@ const customer = await client.customers.create({
 
 // Later, retrieve by email (not a direct API call, but common pattern)
 // You must store the mapping yourself or query Dodo's list endpoint
-const customers = await client.customers.list({ limit: 100 });
-const found = customers.find(c => c.email === user.email);
+const customers = await client.customers.list({ page_size: 100 });
+const found = customers.items.find(c => c.email === user.email);
 ```
 
 **Email matching pitfall:** if a user changes their email in your app, the Dodo customer email won't update automatically. Always sync email changes explicitly via `client.customers.update()`.
@@ -215,7 +241,7 @@ const customer = await client.customers.create({
 });
 const session = await client.checkoutSessions.create({
   product_cart: [...],
-  customer_id: customer.id, // Reuse the customer
+  customer: { customer_id: customer.customer_id }, // Reuse the customer
 });
 ```
 

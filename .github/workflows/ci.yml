@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    name: Validate and type-check skills
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Structural rules: real hostnames, correct key prefixes, no hand-rolled
+      # webhook HMAC, no deprecated calls, manifest/README/frontmatter integrity.
+      - name: Validate skills
+        run: npm run validate
+
+      # Compiles every TypeScript example in every SKILL.md against the real
+      # `dodopayments` types. This is the check that catches wrong field and
+      # parameter names - the failure mode prose review does not reliably catch,
+      # and the one that fails silently in production rather than loudly.
+      - name: Type-check examples
+        run: npm run typecheck

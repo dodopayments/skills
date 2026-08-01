@@ -357,10 +357,10 @@ await updateStorageUsage(
 ```typescript
 const usage = await client.subscriptions.retrieveUsageHistory(
   'sub_abc123',
-  { limit: 100 }
+  { page_size: 100 }
 );
 
-console.log(usage.meters); // Array of meter usage records
+console.log(usage.items); // Array of billing-period usage records
 ```
 
 This returns aggregated usage per meter for the subscription's current billing period.
@@ -503,22 +503,26 @@ Event names are case-sensitive and must match the meter's event name exactly.
 ```typescript
 // WRONG — meter expects "api.call", event sends "API.CALL"
 const meter = await client.meters.create({
+  name: 'API Requests',
   event_name: 'api.call',
-  ...
+  aggregation: { type: 'count' },
+  measurement_unit: 'calls',
 });
 
 await client.usageEvents.ingest({
   events: [{
+    event_id: 'api-call:req_123',
+    customer_id: 'cus_abc',
     event_name: 'API.CALL', // Won't match
-    ...
   }]
 });
 
 // CORRECT
 await client.usageEvents.ingest({
   events: [{
+    event_id: 'api-call:req_123',
+    customer_id: 'cus_abc',
     event_name: 'api.call', // Matches exactly
-    ...
   }]
 });
 ```

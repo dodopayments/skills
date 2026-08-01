@@ -5,7 +5,7 @@ description: Guide for implementing mobile in-app checkout with Dodo Payments ac
 
 # Mobile In-App Checkout
 
-This skill covers integrating Dodo Payments checkout into native and cross-platform mobile apps. It applies when you're building iOS, Android, React Native, or Flutter applications that need to accept payments without redirecting to a web browser.
+This skill covers integrating Dodo Payments hosted checkout into native and cross-platform mobile apps using secure system browser contexts.
 
 ## When to use this skill
 
@@ -24,7 +24,7 @@ Your backend creates the checkout session and returns a URL. The mobile app open
 
 1. **Backend:** Create a checkout session via `client.checkoutSessions.create(...)` and return the `checkout_url` to your mobile app.
 2. **Mobile app:** Call the platform-specific SDK with the checkout URL and a registered return URL scheme.
-3. **Browser context:** The SDK opens the URL in SFSafariViewController (iOS), Chrome Custom Tabs (Android), or a native webview (React Native/Flutter).
+3. **Browser context:** The SDK opens the URL in a secure system browser: SFSafariViewController on iOS and Chrome Custom Tabs on Android.
 4. **Return:** After payment, the browser navigates to your return URL. The SDK captures the result and passes it to your app.
 5. **Verification:** Query the checkout session or listen for a webhook to confirm the payment before granting access.
 
@@ -127,35 +127,49 @@ Add the Dodo Payments Flutter package to `pubspec.yaml`:
 
 ```yaml
 dependencies:
-  dodo_payments_flutter: ^1.0.0
+  dodopayments_checkout: ^1.0.2
 ```
 
 ### Setup
 
-Register the deep-link handler in your main app:
+The package uses `DodoCheckout.instance`. On iOS, register the return URL scheme and forward incoming links from your deep-link listener. Run `flutter pub add app_links` if you use the `app_links` approach shown here:
 
 ```dart
-import 'package:dodo_payments_flutter/dodo_payments_flutter.dart';
+import 'dart:async';
 
-void main() {
-  DodoCheckout.handleDeepLink();
-  runApp(MyApp());
+import 'package:app_links/app_links.dart';
+import 'package:dodopayments_checkout/dodopayments_checkout.dart';
+
+late final StreamSubscription<Uri> checkoutLinkSubscription;
+
+void listenForCheckoutReturns() {
+  checkoutLinkSubscription = AppLinks().uriLinkStream.listen((uri) {
+    unawaited(DodoCheckout.instance.handleOpenURL(uri.toString()));
+  });
 }
 ```
+
+Start the listener from your root state object's `initState` and cancel `checkoutLinkSubscription` from `dispose`. `handleOpenURL` is required on iOS and safely returns `false` on Android.
 
 ### Starting checkout
 
 ```dart
-import 'package:dodo_payments_flutter/dodo_payments_flutter.dart';
+import 'package:dodopayments_checkout/dodopayments_checkout.dart';
 
-final result = await DodoCheckout.start(
-  checkoutUrl: 'https://checkout.dodopayments.com/...',
-  returnUrl: 'myapp://checkout/return',
+final result = await DodoCheckout.instance.start(
+  CheckoutParams(
+    checkoutUrl: Uri.parse('https://checkout.dodopayments.com/...'),
+    returnUrl: Uri.parse('myapp://checkout/return'),
+    onEvent: (event) => print(event.type),
+  ),
 );
 
 switch (result.status) {
   case CheckoutStatus.succeeded:
-    await verifyPaymentOnBackend(result.paymentId);
+    final paymentId = result.paymentId;
+    if (paymentId != null) {
+      await verifyPaymentOnBackend(paymentId);
+    }
     showSuccess();
     break;
   case CheckoutStatus.failed:
@@ -173,22 +187,22 @@ switch (result.status) {
 }
 ```
 
-### Deep-link registration
+### Return URL registration
 
-In `android/app/src/main/AndroidManifest.xml`:
+On Android, set the callback scheme in `android/app/build.gradle.kts`. The package's native checkout dependency supplies the intent filter, so do not add one manually:
 
-```xml
-<activity android:name=".MainActivity">
-  <intent-filter>
-    <action android:name="android.intent.action.VIEW" />
-    <category android:name="android.intent.category.DEFAULT" />
-    <category android:name="android.intent.category.BROWSABLE" />
-    <data android:scheme="myapp" android:host="checkout" android:path="/return" />
-  </intent-filter>
-</activity>
+```kotlin
+android {
+  defaultConfig {
+    minSdk = 23
+    manifestPlaceholders["dodoCallbackScheme"] = "myapp"
+  }
+}
 ```
 
-In `ios/Runner/Info.plist`:
+Remove an empty `android:taskAffinity=""` from `MainActivity` if the generated Flutter manifest contains it; it can prevent Custom Tabs from returning correctly on some devices.
+
+On iOS, register the same scheme in `ios/Runner/Info.plist`:
 
 ```xml
 <key>CFBundleURLTypes</key>
@@ -386,10 +400,9 @@ Query the checkout session to confirm payment:
 ```typescript
 const session = await client.checkoutSessions.retrieve(sessionId);
 
-if (session.status === 'succeeded') {
-  const paymentId = session.payment_id;
-  // Grant access
-  await grantAccess(customerId);
+if (session.payment_status === 'succeeded' && session.payment_id) {
+  const payment = await client.payments.retrieve(session.payment_id);
+  await grantAccess(payment.customer.customer_id);
 }
 ```
 
@@ -495,13 +508,14 @@ if (abandoned) {
 }
 ```
 
-## Package name note
+## Package names
 
-The research documents `@dodopayments/react-native-checkout` as the official React Native package. Older references may mention `@dodopayments/react-native`, which does not exist on npm. Use `@dodopayments/react-native-checkout`.
+Use `@dodopayments/react-native-checkout` for React Native and `dodopayments_checkout` for Flutter. The similarly named `@dodopayments/react-native` and `dodo_payments_flutter` packages do not exist.
 
 ## Resources
 
 - [Mobile Integration](https://docs.dodopayments.com/developer-resources/mobile-integration)
 - [React Native SDK](https://docs.dodopayments.com/developer-resources/sdks/react-native)
+- [Flutter SDK](https://pub.dev/packages/dodopayments_checkout)
 - [Selling Digital Goods on iOS](https://docs.dodopayments.com/features/appstore-digital-goods)
 - [Webhook Integration](https://docs.dodopayments.com/developer-resources/webhooks/intents) (for payment verification)

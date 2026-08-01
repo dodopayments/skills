@@ -5,47 +5,36 @@ description: Guide only for applications using @dodopayments/better-auth, coveri
 
 # Better Auth Integration
 
-This skill covers the `@dodopayments/better-auth` plugin, which synchronizes customers between Better Auth and Dodo Payments, handles checkout sessions, customer portal access, subscription listing, metered usage, and signature-verified webhooks.
+Use `@dodopayments/better-auth` to synchronize Better Auth users with Dodo Payments and expose authenticated checkout, customer portal, subscription, payment, usage, and webhook endpoints.
 
 ## When to use this skill
 
-- You're building a SaaS with Better Auth and need to sync users to Dodo Payments automatically on sign-up.
-- You want to create checkout sessions tied to authenticated users without manual customer creation.
-- You need to let signed-in users access the Dodo customer portal for subscriptions and payment methods.
-- You're ingesting metered usage events from authenticated sessions.
-- You need to handle Dodo webhooks with signature verification and event-specific callbacks.
-
-## Core concepts
-
-**Customer synchronization:** When a user signs up via Better Auth, the plugin creates a Dodo customer automatically if `createCustomerOnSignUp` is enabled. Metadata (like the Better Auth user ID) is attached to the customer record.
-
-**Product slug mapping:** Instead of passing product IDs to checkout, you configure product slugs in the plugin. The plugin maps `slug: "premium-plan"` to the actual Dodo product ID.
-
-**Authenticated portal:** The customer portal session is created server-side for the signed-in user, then redirected to the hosted portal URL.
-
-**Webhook verification:** The plugin exposes a signature-verified webhook endpoint. Dodo signs each webhook with HMAC-SHA256 following the Standard Webhooks spec.
+- Create a Dodo customer automatically when a Better Auth user signs up.
+- Start checkout for a signed-in user without exposing a Dodo API key.
+- Let users open their customer portal or list their subscriptions and payments.
+- Submit metered usage for the signed-in customer.
+- Receive signature-verified Dodo webhooks through Better Auth.
 
 ## Install
 
 ```bash
-npm install @dodopayments/better-auth dodopayments better-auth zod
+npm install @dodopayments/better-auth dodopayments better-auth
 ```
 
-Verify the exact export names against your installed package version, as the official docs show an inconsistency between lowercase `betterAuth` and uppercase `BetterAuth`.
+The package exports the lowercase server functions `dodopayments`, `checkout`, `portal`, `usage`, and `webhooks`. Its client entry point exports `dodopaymentsClient`.
 
 ## Server setup
 
-Register the Dodo plugin with your Better Auth instance. The plugin accepts a Dodo client, customer creation settings, and optional portal support.
+Every endpoint is registered by a feature in `use`. Include every feature that the application calls; omitting one makes its route return 404.
 
 ```typescript
 import { betterAuth } from "better-auth";
 import DodoPayments from "dodopayments";
-import { dodopayments, portal } from "@dodopayments/better-auth";
+import { checkout, dodopayments, portal, usage, webhooks } from "@dodopayments/better-auth";
 
 const dodoPayments = new DodoPayments({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
-  environment: process.env.DODO_PAYMENTS_ENVIRONMENT || "test_mode",
-  webhookKey: process.env.DODO_PAYMENTS_WEBHOOK_KEY,
+  environment: "test_mode",
 });
 
 export const auth = betterAuth({
@@ -56,26 +45,48 @@ export const auth = betterAuth({
     dodopayments({
       client: dodoPayments,
       createCustomerOnSignUp: true,
-      use: [portal()],
       getCustomerParams: (user) => ({
-        metadata: { userId: user.id },
+        metadata: { better_auth_user_id: user.id },
         phone_number: user.phoneNumber ?? null,
       }),
+      use: [
+        checkout({
+          products: [
+            { productId: "pdt_premium", slug: "premium-plan" },
+          ],
+          successUrl: "https://app.example.com/billing/success",
+          authenticatedUsersOnly: true,
+        }),
+        portal(),
+        usage(),
+        webhooks({
+          webhookKey: process.env.DODO_PAYMENTS_WEBHOOK_KEY,
+          onPayload: async (payload) => {
+            console.log("Verified Dodo webhook:", payload.type);
+          },
+        }),
+      ],
     }),
   ],
 });
 ```
 
-**Key options:**
+`products` maps an application slug to a Dodo product ID. `authenticatedUsersOnly: true` requires a Better Auth session for checkout. `getCustomerParams` adds application metadata when customer synchronization runs.
 
-- `client`: The initialized Dodo Payments client.
-- `createCustomerOnSignUp`: If `true`, a Dodo customer is created when a user signs up. Defaults to `false`.
-- `use`: Array of plugin features. Include `portal()` to enable the customer portal.
-- `getCustomerParams`: A function that receives the Better Auth user object and returns Dodo customer metadata. Use this to attach the Better Auth user ID or other fields to the Dodo customer record.
+## Browser client setup
 
-## Client setup and checkout
+```typescript
+import { createAuthClient } from "better-auth/react";
+import { dodopaymentsClient } from "@dodopayments/better-auth/client";
 
-On the client side, use the `authClient.dodopayments.checkoutSession()` method to create a checkout session for the signed-in user.
+export const authClient = createAuthClient({
+  plugins: [dodopaymentsClient()],
+});
+```
+
+These are browser methods. They send the Better Auth session cookie automatically; do not pass `request.headers` to them.
+
+## Create a checkout session
 
 ```typescript
 import { authClient } from "@/lib/auth-client";
@@ -97,143 +108,104 @@ async function startCheckout() {
 }
 ```
 
-**Parameters:**
+`slug` must match a product configured in `checkout({ products: [...] })`. `referenceId` is optional reconciliation metadata.
 
-- `slug`: The product slug configured in your Better Auth plugin setup. Maps to a Dodo product ID.
-- `referenceId`: Your internal order or reference ID. Useful for reconciliation.
-
-The method returns a checkout session with a `url` property. Redirect the user to that URL to begin payment.
-
-## Customer portal
-
-Enable the customer portal by including `portal()` in the plugin's `use` array during server setup. Then create a portal session server-side and redirect the user.
+## Open the customer portal
 
 ```typescript
-import { auth } from "@/lib/auth";
+const { data: portalSession, error } =
+  await authClient.dodopayments.customer.portal();
 
-export async function GET(request: Request) {
-  const session = await auth.api.getSession({ headers: request.headers });
-
-  if (!session) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  const portalSession = await auth.api.dodopayments.customerPortal({
-    headers: request.headers,
-  });
-
-  if (portalSession?.url) {
-    return new Response(null, {
-      status: 302,
-      headers: { Location: portalSession.url },
-    });
-  }
-
-  return new Response("Portal session failed", { status: 500 });
+if (error) {
+  console.error("Portal error:", error);
+} else if (portalSession?.redirect) {
+  window.location.href = portalSession.url;
 }
 ```
 
-The portal allows users to manage subscriptions, update payment methods, view invoices, and cancel plans.
+The portal endpoint requires a signed-in, verified user and resolves that user's synchronized Dodo customer.
 
 ## List subscriptions and payments
 
-Retrieve the signed-in customer's subscriptions and payments.
-
 ```typescript
-const { data: subscriptions } = await authClient.dodopayments.listSubscriptions({
-  headers: request.headers,
-});
+const { data: subscriptions, error: subscriptionsError } =
+  await authClient.dodopayments.customer.subscriptions.list({
+    query: { page: 1, limit: 10, status: "active" },
+  });
 
-const { data: payments } = await authClient.dodopayments.listPayments({
-  headers: request.headers,
-});
+const { data: payments, error: paymentsError } =
+  await authClient.dodopayments.customer.payments.list({
+    query: { page: 1, limit: 10, status: "succeeded" },
+  });
 
-subscriptions?.forEach((sub) => {
-  console.log(`Subscription ${sub.id}: ${sub.status}`);
-});
-
-payments?.forEach((payment) => {
-  console.log(`Payment ${payment.id}: ${payment.amount} ${payment.currency}`);
-});
+if (subscriptionsError || paymentsError) {
+  console.error("Could not load billing history");
+} else {
+  console.log("Subscriptions:", subscriptions?.items);
+  console.log("Payments:", payments?.items);
+}
 ```
 
-## Metered usage ingestion
+Both list responses use an `items` envelope. Subscription filters accept `page`, `limit`, and `status`; payment filters use the same pagination fields and payment statuses.
 
-If you're using metered billing, ingest usage events through the plugin.
+## Ingest metered usage
+
+Enable `usage()` on the server, then submit an event for the signed-in customer:
 
 ```typescript
-const { error } = await authClient.dodopayments.ingestUsage({
-  meter_id: "meter_abc123",
-  quantity: 100,
-  idempotency_key: `usage_${Date.now()}`,
+const { data, error } = await authClient.dodopayments.usage.ingest({
+  event_id: "evt_usage_123",
+  event_name: "api_calls",
+  metadata: { requests: 100 },
+  timestamp: new Date(),
 });
 
 if (error) {
   console.error("Usage ingestion failed:", error);
+} else {
+  console.log("Ingested events:", data?.ingested_count);
 }
 ```
 
-The `idempotency_key` ensures the same event is not counted twice if the request is retried.
+The plugin derives `customer_id` from the authenticated session. `event_id` is the event's idempotency key; reuse it when retrying the same event.
 
 ## Webhook endpoint
 
-Set up a server-side webhook endpoint that verifies signatures and dispatches events.
+`webhooks({ webhookKey, onPayload })` verifies and handles the request itself. With Better Auth's default `/api/auth` base path, configure this URL in the Dodo dashboard:
 
-```typescript
-import { auth } from "@/lib/auth";
-
-export async function POST(request: Request) {
-  const body = await request.text();
-
-  try {
-    const event = await auth.api.dodopayments.verifyWebhook({
-      body,
-      headers: {
-        "webhook-id": request.headers.get("webhook-id") || "",
-        "webhook-signature": request.headers.get("webhook-signature") || "",
-        "webhook-timestamp": request.headers.get("webhook-timestamp") || "",
-      },
-    });
-
-    // Handle event
-    switch (event.type) {
-      case "payment.succeeded":
-        console.log("Payment succeeded:", event.data.payment_id);
-        break;
-      case "subscription.active":
-        console.log("Subscription active:", event.data.subscription_id);
-        break;
-      case "subscription.cancelled":
-        console.log("Subscription cancelled:", event.data.subscription_id);
-        break;
-      default:
-        console.log("Unhandled event:", event.type);
-    }
-
-    return new Response(JSON.stringify({ received: true }), { status: 200 });
-  } catch (error) {
-    console.error("Webhook verification failed:", error);
-    return new Response("Invalid signature", { status: 401 });
-  }
-}
+```text
+https://app.example.com/api/auth/dodopayments/webhooks
 ```
 
-The plugin verifies the webhook signature using the Standard Webhooks spec. The signed message is `webhook-id.webhook-timestamp.raw_body`, HMAC-SHA256, base64-encoded.
+Do not create a second route and do not call `auth.api.dodopayments.verifyWebhook()`; that method does not exist. The plugin reads the raw request, verifies the Standard Webhooks signature with `webhookKey`, and invokes `onPayload` plus any configured event-specific callback.
+
+## Registered endpoints
+
+- `POST /dodopayments/checkout`
+- `POST /dodopayments/checkout-session`
+- `GET /dodopayments/customer/portal`
+- `GET /dodopayments/customer/subscriptions/list`
+- `GET /dodopayments/customer/payments/list`
+- `POST /dodopayments/usage/ingest`
+- `GET /dodopayments/usage/meters/list`
+- `POST /dodopayments/webhooks`
+
+Better Auth prefixes these plugin paths with its configured API base path.
 
 ## Common mistakes
 
-**Creating Dodo customers manually in addition to the plugin.** If `createCustomerOnSignUp` is enabled, the plugin creates the customer automatically. Don't call `client.customers.create()` yourself for the same user, or you'll end up with duplicate customer records.
+**Enabling only `portal()`.** Checkout, usage, and webhook routes do not exist unless `checkout()`, `usage()`, and `webhooks()` are also present in `use`.
 
-**Trusting client-side session state for entitlement.** Always verify the user's subscription status server-side before granting access to premium features. A user's session cookie can be forged or expired; the Dodo subscription is the source of truth.
+**Mixing browser and server APIs.** Call `authClient.dodopayments...` in browser code without a `headers` option. Use Better Auth's server API separately when handling server requests.
 
-**Skipping the webhook endpoint.** If you don't set up the webhook handler, you won't know when subscriptions renew, fail, or are cancelled. Implement the webhook endpoint and register it in the Dodo dashboard.
+**Creating duplicate customers.** When `createCustomerOnSignUp` is enabled, do not also call `client.customers.create()` for the same user.
 
-**Forgetting to pass the raw request body to webhook verification.** If you parse the body as JSON first, then re-serialize it, the signature will not match. Always pass the raw body string to the verification function.
+**Granting access from browser state.** Treat verified webhook events or a server-side Dodo lookup as the source of truth for entitlements.
 
-**Not mapping user metadata.** Use `getCustomerParams` to attach the Better Auth user ID to the Dodo customer. This makes it easy to look up the Dodo customer later when you receive a webhook event.
+**Adding a custom webhook verifier.** The plugin owns `/dodopayments/webhooks`, signature verification, and callback dispatch.
 
 ## Resources
 
 - [Better Auth Adapter](https://docs.dodopayments.com/developer-resources/better-auth-adaptor)
+- [Dodo Payments Better Auth package](https://www.npmjs.com/package/@dodopayments/better-auth)
 - [Dodo Payments SDK](https://github.com/dodopayments/dodopayments-typescript)
-- [Standard Webhooks Spec](https://standardwebhooks.com)

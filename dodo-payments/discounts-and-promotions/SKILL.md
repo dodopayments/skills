@@ -53,11 +53,15 @@ const percentageDiscount = await client.discounts.create({
   }
 });
 
-// Flat discount: $10 off (1000 cents)
+// Flat discount: $10 off (1000 cents in currency_options)
 const flatDiscount = await client.discounts.create({
   type: 'flat',
   amount: 1000,
-  currency: 'USD',
+  currency_options: [{
+    currency: 'USD',
+    max_amount_possible: 1000,
+    is_default: true,
+  }],
   code: 'WELCOME10',
 });
 ```
@@ -91,10 +95,10 @@ console.log(discount.code, discount.type, discount.amount);
 ### Retrieve a discount by code
 
 ```typescript
-const discount = await client.discounts.retrieveByCode('SUMMER2025');
-if (discount) {
+try {
+  const discount = await client.discounts.retrieveByCode('SUMMER2025');
   console.log('Discount found:', discount.amount);
-} else {
+} catch (error) {
   console.log('Code not found or expired');
 }
 ```
@@ -131,13 +135,17 @@ const discount = await client.discounts.create({
 
 ### Flat discounts
 
-Expressed in the smallest currency unit. A $10 discount is `1000` (cents).
+For flat discounts, set the deduction per currency through `currency_options`. A $10 USD deduction is `max_amount_possible: 1000` (cents).
 
 ```typescript
 const discount = await client.discounts.create({
   type: 'flat',
   amount: 1000, // $10.00
-  currency: 'USD',
+  currency_options: [{
+    currency: 'USD',
+    max_amount_possible: 1000,
+    is_default: true,
+  }],
   code: 'FLAT10',
 });
 ```
@@ -153,21 +161,35 @@ const discount = await client.discounts.create({
   type: 'percentage',
   amount: 1500,
   code: 'PREMIUM_ONLY',
-  product_ids: ['pdt_premium', 'pdt_enterprise'],
+  restricted_to: ['pdt_premium', 'pdt_enterprise'],
 });
 ```
 
 ### Customer eligibility
 
-Restrict a discount to specific customers:
+Restrict a discount to specific customers by creating it with `customer_eligibility: 'specific'`, then attaching customers through the discount-customer endpoint. `customer_ids` is not a `discounts.create` parameter.
 
 ```typescript
 const discount = await client.discounts.create({
   type: 'percentage',
   amount: 1500,
   code: 'VIP_ONLY',
-  customer_ids: ['cus_vip_001', 'cus_vip_002'],
+  customer_eligibility: 'specific',
 });
+
+await fetch(
+  `https://test.dodopayments.com/discounts/${discount.discount_id}/customers`,
+  {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.DODO_PAYMENTS_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      customer_ids: ['cus_vip_001', 'cus_vip_002'],
+    }),
+  },
+);
 ```
 
 ### Date range
@@ -179,8 +201,8 @@ const discount = await client.discounts.create({
   type: 'percentage',
   amount: 1500,
   code: 'SUMMER2025',
-  start_date: '2025-06-01T00:00:00Z',
-  expiration_date: '2025-08-31T23:59:59Z',
+  starts_at: '2025-06-01T00:00:00Z',
+  expires_at: '2025-08-31T23:59:59Z',
 });
 ```
 
@@ -193,7 +215,7 @@ const discount = await client.discounts.create({
   type: 'percentage',
   amount: 1500,
   code: 'LIMITED_100',
-  max_redemptions: 100,
+  usage_limit: 100,
 });
 ```
 
@@ -206,7 +228,7 @@ const discount = await client.discounts.create({
   type: 'percentage',
   amount: 1500,
   code: 'FIRST_3_MONTHS',
-  subscription_cycle_limit: 3, // applies to first 3 billing cycles only
+  subscription_cycles: 3, // applies to first 3 billing cycles only
 });
 ```
 
@@ -247,30 +269,26 @@ async function validateDiscount(code, productId) {
   try {
     const discount = await client.discounts.retrieveByCode(code);
     
-    if (!discount) {
-      return { valid: false, reason: 'Code not found' };
-    }
-    
     // Check expiration
-    if (discount.expiration_date && new Date(discount.expiration_date) < new Date()) {
+    if (discount.expires_at && new Date(discount.expires_at) < new Date()) {
       return { valid: false, reason: 'Code expired' };
     }
     
     // Check usage limit
-    if (discount.max_redemptions && discount.redemptions_used >= discount.max_redemptions) {
+    if (discount.usage_limit && discount.times_used >= discount.usage_limit) {
       return { valid: false, reason: 'Code exhausted' };
     }
     
     // Check product eligibility
-    if (discount.product_ids && discount.product_ids.length > 0) {
-      if (!discount.product_ids.includes(productId)) {
+    if (discount.restricted_to.length > 0) {
+      if (!discount.restricted_to.includes(productId)) {
         return { valid: false, reason: 'Code not valid for this product' };
       }
     }
     
     return { valid: true, discount };
   } catch (error) {
-    return { valid: false, reason: 'Validation error' };
+    return { valid: false, reason: 'Code not found or unavailable' };
   }
 }
 
@@ -285,11 +303,11 @@ if (result.valid) {
 
 ## Discounts on plan changes
 
-When a customer changes their subscription plan, discounts can be preserved, replaced, or cleared depending on the `discount_codes` parameter and the `preserve_on_plan_change` setting.
+When a customer changes their subscription plan, discounts can be preserved, replaced, or cleared depending on the `discount_codes` parameter and each discount's `preserve_on_plan_change` setting. Set `preserve_on_plan_change` through `discounts.create` or `discounts.update`; it is not a `subscriptions.changePlan` parameter.
 
 ### Behavior matrix
 
-| Scenario | `discount_codes` | `preserve_on_plan_change` | Result |
+| Scenario | `discount_codes` | Discount's `preserve_on_plan_change` | Result |
 |---|---|---|---|
 | Upgrade with no change | `undefined` | `true` | Existing discounts carry forward |
 | Upgrade with no change | `undefined` | `false` | Existing discounts are removed |
@@ -299,12 +317,16 @@ When a customer changes their subscription plan, discounts can be preserved, rep
 ### Example: preserve existing discounts
 
 ```typescript
+await client.discounts.update('dsc_existing', {
+  preserve_on_plan_change: true,
+});
+
 await client.subscriptions.changePlan('sub_123', {
   product_id: 'pdt_pro',
   quantity: 1,
   proration_billing_mode: 'prorated_immediately',
-  // Omit discount_codes and set preserve_on_plan_change to true
-  preserve_on_plan_change: true,
+  // Omit discount_codes. Existing discounts configured with
+  // preserve_on_plan_change: true carry forward.
 });
 ```
 
@@ -343,9 +365,13 @@ if (code.length > 0) {
 }
 
 // CORRECT: server-side validation
-const discount = await client.discounts.retrieveByCode(code);
-if (discount && isEligible(discount)) {
-  // proceed with checkout
+try {
+  const discount = await client.discounts.retrieveByCode(code);
+  if (isEligible(discount)) {
+    // proceed with checkout
+  }
+} catch (error) {
+  // Unknown or unavailable code; reject the checkout request.
 }
 ```
 
@@ -370,13 +396,16 @@ Passing `discount_codes: []` explicitly removes all discounts, even if `preserve
 // WRONG: removes all discounts
 await client.subscriptions.changePlan('sub_123', {
   product_id: 'pdt_pro',
+  quantity: 1,
+  proration_billing_mode: 'prorated_immediately',
   discount_codes: [], // this clears discounts
 });
 
-// CORRECT: preserves existing discounts
+// CORRECT: preserves discounts whose preserve_on_plan_change property is true
 await client.subscriptions.changePlan('sub_123', {
   product_id: 'pdt_pro',
-  preserve_on_plan_change: true,
+  quantity: 1,
+  proration_billing_mode: 'prorated_immediately',
   // omit discount_codes
 });
 ```
@@ -390,22 +419,24 @@ A code can expire by date or by reaching its redemption limit. Always check both
 const discount = await client.discounts.retrieveByCode(code);
 applyDiscount(discount);
 
-// CORRECT: check expiration and usage
-const discount = await client.discounts.retrieveByCode(code);
-if (!discount) {
+// CORRECT: catch unknown codes, then check expiration and usage
+try {
+  const discount = await client.discounts.retrieveByCode(code);
+  if (discount.expires_at && new Date(discount.expires_at) < new Date()) {
+    showError('Code expired');
+  } else if (discount.usage_limit && discount.times_used >= discount.usage_limit) {
+    showError('Code exhausted');
+  } else {
+    applyDiscount(discount);
+  }
+} catch (error) {
   showError('Code not found');
-} else if (discount.expiration_date && new Date(discount.expiration_date) < new Date()) {
-  showError('Code expired');
-} else if (discount.max_redemptions && discount.redemptions_used >= discount.max_redemptions) {
-  showError('Code exhausted');
-} else {
-  applyDiscount(discount);
 }
 ```
 
 ### Confusing subscription-cycle limits with expiration dates
 
-A `subscription_cycle_limit` applies only to subscriptions and controls how many billing cycles the discount applies. An `expiration_date` is a hard cutoff for all uses of the code.
+`subscription_cycles` applies only to subscriptions and controls how many billing cycles the discount applies. `expires_at` is a hard cutoff for all uses of the code.
 
 ```typescript
 // Applies to first 3 billing cycles of any subscription
@@ -413,7 +444,7 @@ const discount = await client.discounts.create({
   type: 'percentage',
   amount: 1500,
   code: 'FIRST_3_MONTHS',
-  subscription_cycle_limit: 3,
+  subscription_cycles: 3,
 });
 
 // Expires on a specific date, regardless of billing cycles
@@ -421,7 +452,7 @@ const discount2 = await client.discounts.create({
   type: 'percentage',
   amount: 1500,
   code: 'SUMMER_ONLY',
-  expiration_date: '2025-08-31T23:59:59Z',
+  expires_at: '2025-08-31T23:59:59Z',
 });
 ```
 
