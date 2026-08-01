@@ -7,7 +7,9 @@
     "scripts": {
         "validate": "node scripts/validate-skills.mjs .",
         "typecheck": "node scripts/typecheck-examples.mjs",
-        "check": "npm run validate && npm run typecheck"
+        "typecheck:go": "node scripts/check-go-examples.mjs",
+        "typecheck:python": "node scripts/check-python-examples.mjs",
+        "check": "npm run validate && npm run typecheck && npm run typecheck:go && npm run typecheck:python"
     },
     "devDependencies": {
         "@dodopayments/astro": "^0.2.9",
@@ -24,6 +26,7 @@
         "@dodopayments/sveltekit": "^0.2.8",
         "@dodopayments/tanstack": "^0.2.8",
         "dodopayments": "^2.44.0",
+        "dodopayments-checkout": "^1.9.5",
         "standardwebhooks": "^1.0.0",
         "typescript": "^5.6.0"
     },

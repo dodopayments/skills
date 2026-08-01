@@ -48,6 +48,14 @@ const SIGNING_HINT = /webhook-id\s*\.\s*webhook-timestamp|webhook-id`?\s*\+|\$\{
 
 const seenNames = new Map();
 
+/**
+ * skill dir -> frontmatter description, so marketplace.json can be checked for
+ * DRIFT rather than mere presence. The two are published separately; an agent
+ * matches on the marketplace description but then loads the skill body, so a
+ * silent divergence makes the wrong skill get selected.
+ */
+const frontmatterDesc = new Map();
+
 for (const dir of dirs) {
     const file = join(skillsDir, dir, 'SKILL.md');
     const rel = `dodo-payments/${dir}/SKILL.md`;
@@ -78,6 +86,7 @@ for (const dir of dirs) {
     }
     if (descM) {
         const d = descM[1].trim();
+        frontmatterDesc.set(dir, d);
         if (d.length < 40) warn(rel, `description is very short (${d.length} chars) — weakens skill matching`);
         if (d.length > 400) warn(rel, `description is very long (${d.length} chars)`);
     }
@@ -177,7 +186,22 @@ if (!existsSync(mpPath)) {
                 if (!existsSync(join(abs, 'SKILL.md'))) {
                     err('marketplace.json', `plugin "${p.name}" -> "${s}" has no SKILL.md`);
                 }
-                listed.add(s.replace(/^\.\//, '').replace(/\/$/, ''));
+                const key = s.replace(/^\.\//, '').replace(/\/$/, '');
+                listed.add(key);
+
+                // Presence was already checked; what actually matters is that the
+                // two copies have not DRIFTED. Byte-for-byte, because an agent
+                // selects on the marketplace text and then loads the skill body.
+                const dir = key.replace(/^dodo-payments\//, '');
+                const fmDesc = frontmatterDesc.get(dir);
+                if (p.description && fmDesc && p.description.trim() !== fmDesc) {
+                    err(
+                        'marketplace.json',
+                        `plugin "${p.name}" description does not match ${key}/SKILL.md frontmatter\n` +
+                        `    marketplace: ${p.description.trim()}\n` +
+                        `    frontmatter: ${fmDesc}`,
+                    );
+                }
             }
         }
         for (const dir of dirs) {

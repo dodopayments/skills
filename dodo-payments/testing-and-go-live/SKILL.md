@@ -117,8 +117,10 @@ client.subscriptions.update(
 ```
 
 ```go
+// NextBillingDate is param.Field[time.Time], not a string. Passing a string
+// literal compiles to param.Field[string] and will not type-check.
 client.Subscriptions.Update(ctx, "sub_123", dodopayments.SubscriptionUpdateParams{
-    NextBillingDate: dodopayments.F("2026-05-03T00:00:00Z"),
+    NextBillingDate: dodopayments.F(time.Date(2026, time.May, 3, 0, 0, 0, 0, time.UTC)),
 })
 ```
 

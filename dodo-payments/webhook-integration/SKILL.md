@@ -133,14 +133,24 @@ app.post('/webhook', async (req, res) => {
 **Python:**
 
 ```python
+from typing import Literal
 from fastapi import FastAPI, Request, HTTPException
 from dodopayments import DodoPayments
 import os
 
+# `environment` is Literal["live_mode", "test_mode"], not str. Passing the raw
+# variable through raises at construction: unset gives
+# `ValueError: Unknown environment: None`, and a typo like "test" gives
+# `Unknown environment: test`. Narrow it, defaulting to test mode so a
+# misconfigured variable can never select live.
+ENVIRONMENT: Literal["live_mode", "test_mode"] = (
+    "live_mode" if os.getenv("DODO_PAYMENTS_ENVIRONMENT") == "live_mode" else "test_mode"
+)
+
 app = FastAPI()
 client = DodoPayments(
     bearer_token=os.getenv("DODO_PAYMENTS_API_KEY"),
-    environment=os.getenv("DODO_PAYMENTS_ENVIRONMENT"),
+    environment=ENVIRONMENT,
     webhook_key=os.getenv("DODO_PAYMENTS_WEBHOOK_KEY"),
 )
 
@@ -165,31 +175,45 @@ async def handle_webhook(request: Request):
 
 ```go
 import (
-	"context"
 	"io"
 	"net/http"
 	"os"
+
 	"github.com/dodopayments/dodopayments-go"
 	"github.com/dodopayments/dodopayments-go/option"
 )
 
+// The Go SDK has no WithEnvironment(string). It exposes two explicit options,
+// so narrow here and default to test mode: an unset or misspelled variable must
+// never select live mode.
+func dodoEnvironment() option.RequestOption {
+	if os.Getenv("DODO_PAYMENTS_ENVIRONMENT") == "live_mode" {
+		return option.WithEnvironmentLiveMode()
+	}
+	return option.WithEnvironmentTestMode()
+}
+
 func webhookHandler(w http.ResponseWriter, r *http.Request) {
 	client := dodopayments.NewClient(
 		option.WithBearerToken(os.Getenv("DODO_PAYMENTS_API_KEY")),
-		option.WithEnvironment(os.Getenv("DODO_PAYMENTS_ENVIRONMENT")),
+		dodoEnvironment(),
 		option.WithWebhookKey(os.Getenv("DODO_PAYMENTS_WEBHOOK_KEY")),
 	)
-	
-	rawBody, _ := io.ReadAll(r.Body)
-	if _, err := client.Webhooks.Unwrap(context.Background(), rawBody, map[string]string{
-		"webhook-id":        r.Header.Get("webhook-id"),
-		"webhook-signature": r.Header.Get("webhook-signature"),
-		"webhook-timestamp": r.Header.Get("webhook-timestamp"),
-	}); err != nil {
+
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Cannot read body", http.StatusBadRequest)
+		return
+	}
+
+	// Unwrap takes the raw body and the request headers directly. It is not
+	// context-aware and does not take a map: the signature is
+	// Unwrap(payload []byte, headers http.Header, opts ...option.RequestOption).
+	if _, err := client.Webhooks.Unwrap(rawBody, r.Header); err != nil {
 		http.Error(w, "Invalid signature", http.StatusUnauthorized)
 		return
 	}
-	
+
 	// Signature verified. Process the event.
 	w.WriteHeader(http.StatusOK)
 }

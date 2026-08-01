@@ -96,12 +96,12 @@ Skills are reusable capabilities for AI agents. They provide procedural knowledg
 ## Contributing
 
 Skills are pasted verbatim into an agent's context and reproduced as-is, so a wrong field name propagates
-exactly as reliably as correct code — and usually fails *silently* rather than loudly. Two checks run in CI
+exactly as reliably as correct code — and usually fails *silently* rather than loudly. Four checks run in CI
 and should be run locally before opening a PR:
 
 ```bash
 npm install
-npm run check      # validate + typecheck
+npm run check      # validate + typecheck (TypeScript, Go, Python)
 ```
 
 **`npm run validate`** enforces structural rules: real API hostnames, correct `dodo_test_`/`dodo_live_` key
@@ -109,8 +109,17 @@ formats, no hand-rolled webhook HMAC, no deprecated SDK calls, no type suppressi
 each skill's directory name, its frontmatter, `marketplace.json`, and the README table.
 
 **`npm run typecheck`** extracts every TypeScript block from every `SKILL.md` and compiles it against the
-real `dodopayments` types. This is what catches wrong field and parameter names. Blocks introduced as
-deliberate counter-examples (`Wrong:`, `Incorrect:`) are skipped, since they are supposed to be wrong.
+real `dodopayments` types — plus the `@dodopayments/*` framework adapters, so adapter examples are checked
+rather than degrading to `any`. This is what catches wrong field and parameter names.
+
+**`npm run typecheck:go`** and **`npm run typecheck:python`** do the same for Go and Python examples, using
+`go build` against `dodopayments-go` and pyright against the real Python SDK. The Python check creates a
+virtualenv on first run and reuses it afterwards.
+
+Blocks that are deliberate counter-examples are skipped, but only when *explicitly* labelled — a bolded
+`**Wrong:**`-style marker, or an `<!-- typecheck: skip -->` comment. Inferring "this is meant to be broken"
+from surrounding prose silently removed coverage from correct blocks, so opting out is now deliberate and
+greppable.
 
 When you add or change an example, prefer fixing the field name over casting to `any` — the point of the
 check is that the published example actually compiles.

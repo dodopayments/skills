@@ -37,27 +37,48 @@ const JSON_OUT = process.argv.includes('--json');
 const TS_LANGS = new Set(['typescript', 'ts', 'tsx']);
 
 /**
- * A block is a deliberate counter-example if the nearby preceding prose says so.
- * Those blocks are *meant* to be wrong and must not be type-checked.
+ * A block is a deliberate counter-example only when it is EXPLICITLY labelled
+ * as one - a bolded label such as `**Wrong:**`, or an opt-out comment.
+ *
+ * This used to match any of "wrong/never/fails/mistake/..." appearing as bare
+ * prose within four preceding lines, which disabled checking on ~20 correct
+ * blocks - including ones explicitly labelled **Correct:** and several that had
+ * just been fixed. Inferring intent from prose silently removes coverage;
+ * requiring a marker makes opting out deliberate and greppable.
  */
-const NEGATIVE_MARKER = /\b(wrong|incorrect|don't|do not|avoid|bad|anti-pattern|broken|never|fails|mistake)\b/i;
+const NEGATIVE_MARKER =
+    /(?:\*\*|__)\s*(?:wrong|incorrect|don't|do not|avoid|bad|anti-pattern|broken|unsafe|never)\b[^*_\n]{0,60}?(?:\*\*|__)/i;
+
+/** Explicit, greppable opt-out for blocks that cannot compile by design. */
+const SKIP_COMMENT = /<!--\s*typecheck:\s*skip\s*-->/i;
 
 /**
  * App-level identifiers that skills legitimately reference without defining.
  * Declaring them `any` keeps the signal on SDK shapes.
  */
+/**
+ * Emitted only when the block does NOT bind its own `DodoPayments`. Some blocks
+ * import the *browser* SDK (`import { DodoPayments } from 'dodopayments-checkout'`),
+ * which is a different type from the server SDK; unconditionally importing the
+ * server one here produced a duplicate identifier and then resolved the browser
+ * SDK's members against the wrong type.
+ */
+const PREAMBLE_SDK_VALUE_IMPORT = `import DodoPayments from 'dodopayments';\n`;
+
 const PREAMBLE = `
 /* eslint-disable */
-import DodoPayments from 'dodopayments';
+// Type-only alias so \`client\` stays typed even when the block binds its own
+// \`DodoPayments\` value from a different package.
+import type DodoPaymentsSDK__ from 'dodopayments';
 
 // Most blocks use \`client\` without re-constructing it (it is set up in an
 // earlier block of the same SKILL.md). Without a TYPED declaration here, the
 // identifier resolves to \`any\` and the SDK is never actually checked - which
 // is precisely how a "clean" run can hide every field-name error.
 // Blocks that do declare their own \`const client\` shadow this legally.
-declare const client: DodoPayments;
-declare const dodo: DodoPayments;
-declare const dodoClient: DodoPayments;
+declare const client: DodoPaymentsSDK__;
+declare const dodo: DodoPaymentsSDK__;
+declare const dodoClient: DodoPaymentsSDK__;
 
 declare var db: any;
 declare var prisma: any;
@@ -105,6 +126,20 @@ declare function getUser(...args: any[]): any;
 declare function requireUser(...args: any[]): any;
 declare function lookupProductId(...args: any[]): any;
 declare function planToProductId(...args: any[]): any;
+
+// Astro and Vite expose env through \`import.meta.env\`, typed as string.
+// DECLARE it rather than suppressing the resulting TS2339: an unknown property
+// makes the whole expression \`any\`, which silently disables checking on
+// everything downstream - the same failure mode as an unresolved import, and
+// how unnarrowed \`environment\` survived in the Astro examples.
+declare global {
+    interface ImportMetaEnv {
+        readonly [key: string]: string;
+    }
+    interface ImportMeta {
+        readonly env: ImportMetaEnv;
+    }
+}
 `;
 
 /**
@@ -154,20 +189,32 @@ function stripExports(code) {
 /**
  * Imports are only legal at module top level, but we wrap each block in a
  * function so top-level await works. Hoist any import statements out.
+ *
+ * Each hoisted line is replaced by a BLANK line rather than removed, so the
+ * body keeps the same line count as the original block. That makes the
+ * source-line mapping a single fixed offset instead of a per-block correction,
+ * which is what previously drifted reported line numbers by `1 - hoisted`.
  */
 function hoistImports(code) {
     const imports = [];
     const rest = [];
     for (const line of code.split('\n')) {
         if (/^\s*import\s.+from\s+['"][^'"]+['"];?\s*$/.test(line) || /^\s*import\s+['"][^'"]+['"];?\s*$/.test(line)) {
-            // The preamble already imports the SDK; re-importing it collides.
-            if (/from\s+['"]dodopayments['"]/.test(line)) continue;
             imports.push(line.trim());
+            rest.push('');
         } else {
             rest.push(line);
         }
     }
     return { imports: imports.join('\n'), body: rest.join('\n') };
+}
+
+/**
+ * Does the block bind the identifier `DodoPayments` itself (default or named,
+ * from any module)? If so the preamble must not also import it.
+ */
+function bindsDodoPayments(code) {
+    return /^\s*import\s+(?:DodoPayments\b|(?:[\w*\s{},]*\{[^}]*\bDodoPayments\b[^}]*\}))/m.test(code);
 }
 
 function listSkillDirs() {
@@ -195,12 +242,12 @@ function extractBlocks(md) {
         while (j < lines.length && !/^```\s*$/.test(lines[j])) j++;
 
         if (TS_LANGS.has(lang)) {
-            // negative-example detection: scan back up to 4 non-empty lines
+            // Explicit markers only, and only in the 2 lines immediately above.
             let negative = false;
-            for (let k = i - 1, seen = 0; k >= 0 && seen < 4; k--) {
+            for (let k = i - 1, seen = 0; k >= 0 && seen < 2; k--) {
                 if (!lines[k].trim()) continue;
                 seen++;
-                if (NEGATIVE_MARKER.test(lines[k])) {
+                if (SKIP_COMMENT.test(lines[k]) || NEGATIVE_MARKER.test(lines[k])) {
                     negative = true;
                     break;
                 }
@@ -242,16 +289,17 @@ function main() {
             const ext = looksLikeJsx(normalized) ? 'tsx' : 'ts';
             const name = `case_${String(n).padStart(4, '0')}.${ext}`;
 
-            const header = `${PREAMBLE}\n${imports}\nexport {};\nasync function __case() {\n`;
+            const sdkImport = bindsDodoPayments(b.code) ? '' : PREAMBLE_SDK_VALUE_IMPORT;
+            const header = `${PREAMBLE}\n${sdkImport}${imports}\nexport {};\nasync function __case() {\n`;
             const body = `${header}${inner}\n}\nvoid __case;\n`;
             writeFileSync(join(WORK, name), body);
             index.set(name, {
                 file: rel,
                 startLine: b.startLine,
-                // lines added before the user's code begins. Imports were
-                // hoisted out of the body, so account for how many were moved.
+                // Lines added before the user's code begins. Hoisted imports
+                // leave blank lines behind, so the body is line-for-line the
+                // same as the original block and no further correction applies.
                 offset: header.split('\n').length - 1,
-                hoisted: imports ? imports.split('\n').length : 0,
             });
             n++;
         }
@@ -319,7 +367,8 @@ function main() {
         const meta = index.get(name);
         if (!meta) continue;
 
-        const srcLine = meta.startLine + (Number(lineNo) - meta.offset);
+        // Body line 1 sits at file line offset+1 and maps to SKILL.md startLine.
+        const srcLine = meta.startLine + (Number(lineNo) - meta.offset) - 1;
         const entry = { file: meta.file, line: srcLine, code, message };
 
         // A file that fails to PARSE gets no semantic checking at all, so every
@@ -346,9 +395,9 @@ function main() {
         if (code === 'TS2686' || code === 'TS6133') continue;
         if (code === 'TS2528' || code === 'TS2323') continue;
         // Runtime/framework globals we deliberately do not ship types for
-        // (Astro/Vite import.meta.env, Bun, Electron preload, DOM extras).
-        // These are not SDK-shape errors.
-        if (/'env' does not exist on type 'ImportMeta'/.test(message)) continue;
+        // (Bun, Electron preload, DOM extras). These are not SDK-shape errors.
+        // NOTE: import.meta.env is deliberately NOT suppressed here - it is
+        // declared in the preamble instead, so Astro examples stay checked.
         if (code === 'TS2868' || /Cannot find name 'Bun'/.test(message)) continue;
         if (/does not exist on type 'Window/.test(message)) continue;
         // Artifacts of our own elision normalization / isolated fragments.

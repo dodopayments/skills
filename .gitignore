@@ -1,4 +1,7 @@
 node_modules/
 .typecheck-tmp/
+.gocheck-tmp/
+.pycheck-tmp/
+.python-check-venv/
 *.log
 .DS_Store
