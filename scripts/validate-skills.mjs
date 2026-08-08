@@ -19,9 +19,6 @@ const warn = (f, m) => warnings.push(`${f}: ${m}`);
 const skillsDir = join(root, 'dodo-payments');
 const dirs = readdirSync(skillsDir).filter((d) => statSync(join(skillsDir, d)).isDirectory()).sort();
 
-// name field is allowed to differ from dir only for this one legacy case
-const NAME_EXCEPTIONS = { 'best-practices': 'dodo-best-practices' };
-
 // Banned content. Each: [regex, human explanation]
 const BANNED = [
     [/api\.dodopayments\.com/, 'dead hostname (no DNS record) — use live./test.dodopayments.com'],
@@ -79,8 +76,7 @@ for (const dir of dirs) {
 
     if (nameM) {
         const name = nameM[1].trim();
-        const expected = NAME_EXCEPTIONS[dir] ?? dir;
-        if (name !== expected) err(rel, `frontmatter name "${name}" != expected "${expected}"`);
+        if (name !== dir) err(rel, `frontmatter name "${name}" != directory "${dir}"`);
         if (seenNames.has(name)) err(rel, `duplicate skill name "${name}" (also in ${seenNames.get(name)})`);
         seenNames.set(name, rel);
     }
