@@ -15,7 +15,7 @@
       "source": "./",
       "strict": false,
       "skills": [
-        "./dodo-payments/best-practices"
+        "./dodo-payments/dodo-best-practices"
       ]
     },
     {

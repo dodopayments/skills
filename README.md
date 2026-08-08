@@ -15,9 +15,9 @@ npx skills add dodopayments/skills
 Or install individual skills:
 
 ```bash
-npx skills add dodopayments/skills/dodo-best-practices
-npx skills add dodopayments/skills/webhook-integration
-npx skills add dodopayments/skills/subscription-integration
+npx skills add dodopayments/skills/dodo-payments/dodo-best-practices
+npx skills add dodopayments/skills/dodo-payments/webhook-integration
+npx skills add dodopayments/skills/dodo-payments/subscription-integration
 ```
 
 ### Claude Code
@@ -46,7 +46,7 @@ Skills are automatically available when configured in your OpenCode settings.
 
 | Skill | Description |
 |-------|-------------|
-| [dodo-best-practices](./dodo-payments/best-practices/) | Orientation guide: SDKs, environments, auth, core concepts, and the canonical integration path |
+| [dodo-best-practices](./dodo-payments/dodo-best-practices/) | Orientation guide: SDKs, environments, auth, core concepts, and the canonical integration path |
 | [framework-adapters](./dodo-payments/framework-adapters/) | Official adapter packages for Next.js, Express, Hono, Astro, Remix, SvelteKit, Nuxt, Fastify, TanStack, Bun, and Convex |
 | [testing-and-go-live](./dodo-payments/testing-and-go-live/) | Test mode, test payment methods, webhook testing, and the production launch checklist |
 
