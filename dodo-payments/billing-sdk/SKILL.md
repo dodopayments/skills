@@ -75,8 +75,10 @@ From the current official registry, grouped by purpose:
 | Payments | `payment-details`, `payment-details-two`, `payment-method-selector`, `payment-card`, `payment-failure` |
 | Promotion and trials | `banner`, `limited-offer-dialog`, `trial-expiry-card` |
 
-`pricing-table-one` is the only block with an officially published prop example, reproduced below. For
-every other block, run `add` and read the generated file's props type.
+Most blocks have a published usage example and props table on their page at
+[billingsdk.com/docs/components](https://billingsdk.com/docs/components) (for example `subscription-management`
+and `billing-settings`); `pricing-table-one` is reproduced below. The generated file's props type is still
+authoritative for the version you installed, so read it after running `add`.
 
 ## Server client
 
@@ -496,7 +498,7 @@ Reconcile `lib/billingsdk-config.ts` with the dashboard as part of any pricing c
 **`npm install billingsdk`.** The root repository package is private. Install through
 `@billingsdk/cli` or the shadcn registry instead.
 
-**Guessing prop names.** `pricing-table-one` is the only block with a published prop example. Open the
+**Guessing prop names.** Check the block's page on billingsdk.com/docs/components, then open the
 generated file under `components/billingsdk/` and read the exported props type before wiring anything else.
 
 **Using `DODO_PAYMENTS_WEBHOOK_SECRET`.** The SDK reads `DODO_PAYMENTS_WEBHOOK_KEY` for the `webhookKey`
