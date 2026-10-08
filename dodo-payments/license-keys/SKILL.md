@@ -1,6 +1,6 @@
 ---
 name: license-keys
-description: Guide for implementing license key management with Dodo Payments - activation, validation, and access control for software products.
+description: Dodo Payments license keys for software products, covering activation, validation, and deactivation via client.licenses, activation limits, expiry, entitlement grants, revocation, and license webhooks. Use when gating a desktop app, CLI, plugin, or SaaS feature behind a license key, enforcing per-seat or per-device limits, or building a license dashboard.
 ---
 
 # Dodo Payments License Keys

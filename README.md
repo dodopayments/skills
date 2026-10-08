@@ -58,6 +58,7 @@ Skills are automatically available when configured in your OpenCode settings.
 | [subscription-integration](./dodo-payments/subscription-integration/) | Subscription lifecycle, trials, plan changes, proration, and on-demand charging |
 | [mobile-checkout](./dodo-payments/mobile-checkout/) | In-app checkout for React Native, Flutter, iOS, and Android |
 | [webhook-integration](./dodo-payments/webhook-integration/) | Receiving and verifying webhooks with the Standard Webhooks specification |
+| [dodo-mcp-usage](./dodo-payments/dodo-mcp-usage/) | When to use the dodo-knowledge docs MCP vs the dodopayments-api MCP (Code Mode), auth setup, test-mode safety rules, and troubleshooting |
 
 ### Billing models
 

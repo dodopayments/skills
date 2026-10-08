@@ -1,6 +1,6 @@
 ---
 name: refunds-and-disputes
-description: Guide for issuing refunds, handling disputes and chargebacks, and reconciling customer access with Dodo Payments
+description: Dodo Payments refunds and disputes, covering full and partial refunds, refund statuses, dispute and chargeback lifecycle events, evidence, and revoking or restoring customer access. Use when issuing a refund, handling refund or dispute webhooks, responding to a chargeback, or reconciling entitlements after a payment reversal.
 ---
 
 # Refunds and Disputes

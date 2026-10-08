@@ -1,6 +1,6 @@
 ---
 name: checkout-integration
-description: Guide for starting hosted Checkout Sessions, payment links, and overlay or inline checkout for one-time and recurring products; use subscription-integration for post-checkout lifecycle management.
+description: Dodo Payments checkout via hosted Checkout Sessions (client.checkoutSessions.create), static payment links, and overlay or inline checkout for one-time and subscription products. Use when building a pay button, checkout page, trial signup, custom fields, discount codes at checkout, or return_url redirects; use subscription-integration for post-checkout lifecycle.
 ---
 
 # Dodo Payments Checkout Integration

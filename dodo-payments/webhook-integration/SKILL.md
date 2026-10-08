@@ -1,6 +1,6 @@
 ---
 name: webhook-integration
-description: Complete guide for setting up and handling Dodo Payments webhooks for real-time payment event notifications.
+description: Dodo Payments webhook handling, covering endpoint setup, Standard Webhooks signature verification on the raw body, payment, subscription, and refund event types, idempotency with webhook-id, retries, and local testing. Use when receiving Dodo events, verifying webhook-signature headers, or syncing your database from payment.succeeded or subscription events.
 ---
 
 # Dodo Payments Webhook Integration

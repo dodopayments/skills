@@ -1,6 +1,6 @@
 ---
 name: mobile-checkout
-description: Guide for implementing mobile in-app checkout with Dodo Payments across React Native, Flutter, iOS, and Android platforms.
+description: Dodo Payments in-app checkout for React Native, Flutter, native iOS, and Android using SFSafariViewController or Chrome Custom Tabs. Use when a mobile app must open a backend-created checkout session, handle deep link or custom URL scheme returns, recover abandoned checkouts, and verify payment server-side before unlocking access.
 ---
 
 # Mobile In-App Checkout

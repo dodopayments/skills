@@ -1,6 +1,6 @@
 ---
 name: better-auth-integration
-description: Guide only for applications using @dodopayments/better-auth, covering authenticated customer sync, checkout, portal access, usage ingestion, and verified webhook callbacks.
+description: Dodo Payments plugin for Better Auth (@dodopayments/better-auth) covering customer sync on signup, authenticated checkout, customer portal, usage ingestion, and verified webhooks. Use when an app uses Better Auth and needs the dodopayments, dodopaymentsClient, checkout, portal, usage, or webhooks plugins; for other auth stacks use framework-adapters.
 ---
 
 # Better Auth Integration
