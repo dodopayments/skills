@@ -5,7 +5,9 @@ description: How and when to use the Dodo Payments MCP servers (dodo-knowledge f
 
 # Using the Dodo Payments MCP servers
 
-The Dodo agent plugin ships two MCP servers. They do different jobs, so pick the right one before you call anything.
+The [Dodo Payments agent plugin](https://github.com/dodopayments/dodo-agent-plugin) ships two MCP servers. They do different jobs, so pick the right one before you call anything.
+
+**Prerequisite:** this skill is useful only when the servers are connected. Installing these skills on their own (for example with `npx skills add`) does **not** connect them. Check your tool list for the Dodo tools; if they are missing, install the agent plugin, which registers both servers, or add them by hand as described under [Authentication](#authentication). Without them, fall back to the other skills and the docs at docs.dodopayments.com.
 
 | Server | URL | Auth | Use it for |
 |--------|-----|------|------------|
@@ -62,7 +64,7 @@ Typical read-only flow:
 These are non-negotiable when the API server is connected.
 
 1. **Default to test mode.** For the local server, `DODO_PAYMENTS_ENVIRONMENT` defaults to `live_mode` when unset, so set `test_mode` explicitly during development. Use `dodo_test_` keys with test mode and `dodo_live_` keys with live mode.
-2. **Know which mode you're in before any write.** If you can't tell, ask the user.
+2. **Know which mode you're in before any write.** With the local server, it is `DODO_PAYMENTS_ENVIRONMENT`. With the remote OAuth server the mode follows the account the user signed in to and is not visible in the tool configuration, so **always ask the user to confirm test or live mode before the first write in a session**. A read can help you check: for example, if the user gives an ID, retrieving it succeeds only in the mode it was created in.
 3. **Read before write.** Retrieve the resource first, show the user what will change, then act.
 4. **Confirm every live mode write with the user**, naming the exact resource ID and the effect. This is mandatory for:
    - refunds (full or partial),
@@ -83,11 +85,14 @@ The plugin points at `https://mcp.dodopayments.com/mcp`. The first time a tool i
 Both servers speak Streamable HTTP, so clients connect to the URL directly (no bridge process). Client setup, if the user is wiring it up by hand:
 
 - **Claude Code**: `claude mcp add --transport http dodopayments-api https://mcp.dodopayments.com/mcp`
-- **Cursor, VS Code, and other `.mcp.json` clients**: `{"mcpServers": {"dodopayments-api": {"type": "http", "url": "https://mcp.dodopayments.com/mcp"}}}`
+- **Cursor and other `.mcp.json` clients**: `{"mcpServers": {"dodopayments-api": {"type": "http", "url": "https://mcp.dodopayments.com/mcp"}}}`
+- **VS Code** (`.vscode/mcp.json` uses a top-level `servers` key): `{"servers": {"dodopayments-api": {"type": "http", "url": "https://mcp.dodopayments.com/mcp"}}}`
 - **Codex CLI**: `codex mcp add dodopayments-api --url https://mcp.dodopayments.com/mcp`, then `codex mcp login dodopayments-api`
 - **Claude.ai**: Settings, Connectors, Add Custom Connector, paste the URL.
 
 `dodo-knowledge` is configured the same way with `https://knowledge.dodopayments.com/mcp` and needs no sign-in.
+
+For a client that cannot dial Streamable HTTP or run MCP OAuth itself, the `mcp-remote` bridge still works as a fallback: run `npx -y mcp-remote@latest https://mcp.dodopayments.com/mcp` as a stdio server.
 
 ### Local stdio server
 
