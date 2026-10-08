@@ -1,6 +1,6 @@
 ---
 name: credit-based-billing
-description: Complete guide for giving customers included, free, prepaid, promotional, or top-up credits using grants, balances, ledger deductions, rollover, expiry, alerts, and overage.
+description: Dodo Payments credit-based billing with credit entitlements, grants, balances, ledger deductions, rollover, expiry, low-balance alerts, and overage. Use when selling prepaid or top-up credit packs, including credits in a plan, deducting AI token or API credits via meters, or granting promo credits; use usage-based-billing for direct per-unit charges.
 ---
 
 # Dodo Payments Credit-Based Billing

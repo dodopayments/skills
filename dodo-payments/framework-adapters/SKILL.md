@@ -1,6 +1,6 @@
 ---
 name: framework-adapters
-description: Guide for mounting official @dodopayments/* checkout, portal, and verified-webhook route handlers in supported web frameworks; use domain skills for payment and lifecycle logic.
+description: Official @dodopayments/* framework adapters that mount Checkout, CustomerPortal, and Webhooks route handlers. Use when integrating Dodo Payments into Next.js, Express, Fastify, Hono, Astro, Remix, SvelteKit, Nuxt, TanStack, Bun, or Convex, such as @dodopayments/nextjs; use domain skills for payment and subscription logic.
 ---
 
 # Framework Adapters

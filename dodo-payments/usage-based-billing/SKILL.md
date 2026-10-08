@@ -1,6 +1,6 @@
 ---
 name: usage-based-billing
-description: Guide for charging directly per measured API call, token, storage unit, or other consumption using meters, stable usage events, aggregation, free thresholds, and metered subscriptions.
+description: Dodo Payments usage-based billing that charges per measured unit, covering meters, usage event ingestion by event_name, aggregation, free thresholds, price_per_unit, and metered subscriptions. Use when billing per API call, AI token, storage, or bandwidth, sending usage events, or adding metered pricing to a plan; use credit-based-billing for prepaid credit pools.
 ---
 
 # Dodo Payments Usage-Based Billing

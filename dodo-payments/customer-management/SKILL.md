@@ -1,6 +1,6 @@
 ---
 name: customer-management
-description: Guide for managing customer records, saved payment methods, monetary wallets, and hosted customer-portal sessions; subscription lifecycle and custom billing UI are covered separately.
+description: Dodo Payments customer management, covering customer CRUD, saved payment methods, real-money customer wallets and ledger entries, entitlements, and hosted customer portal sessions. Use when linking app users to cus_ IDs, opening a Manage billing portal, listing or deleting payment methods, or crediting wallets; use credit-based-billing for usage credits.
 ---
 
 # Customer Management

@@ -1,6 +1,6 @@
 ---
 name: billing-sdk
-description: Guide for building billing UI with BillingSDK - the open-source React component library for pricing tables, subscription management, usage meters, invoice history, and customer portal flows wired to Dodo Payments.
+description: BillingSDK, the open-source React and shadcn component library for Dodo Payments billing UI. Use when building pricing tables, pricing pages, account billing pages, usage meters, credit balances, invoice history, or cancel and upgrade UI in React or Next.js, or running @billingsdk/cli init; keep Dodo API calls server-side.
 ---
 
 # BillingSDK

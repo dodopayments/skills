@@ -1,6 +1,6 @@
 ---
 name: testing-and-go-live
-description: Guide for test-mode payment scenarios, renewal simulation, local webhook delivery tests, test and live catalog migration, and production launch checks.
+description: Dodo Payments test mode and production launch, covering test cards and payment methods, success and decline scenarios, renewal simulation, local webhook testing with the CLI, copying products from test to live, and a go-live checklist. Use when verifying payment flows, switching from test_mode to live_mode, or preparing to launch.
 ---
 
 # Testing and Go-Live

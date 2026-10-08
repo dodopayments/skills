@@ -1,6 +1,6 @@
 ---
 name: localized-pricing
-description: Guide for implementing localized pricing, adaptive currency, and purchasing power parity with Dodo Payments
+description: Dodo Payments multi-currency pricing, covering fixed localized prices per country or currency, Adaptive Currency live FX conversion at checkout, and purchasing power parity (PPP) percentages. Use when pricing in INR, EUR, or other local currencies, offering regional or PPP discounts, or resolving billing country and currency fallback.
 ---
 
 # Localized Pricing, Adaptive Currency, and PPP

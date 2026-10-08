@@ -1,6 +1,6 @@
 ---
 name: discounts-and-promotions
-description: Guide for implementing discount codes and promotional pricing with Dodo Payments, including CRUD operations, eligibility rules, stacking, subscription-cycle limits, and plan-change preservation.
+description: Dodo Payments discount codes and promotional pricing, covering discount CRUD, percentage and flat amounts, eligibility rules, usage limits, stacking via discount_codes, subscription-cycle limits, and preservation on plan changes. Use when creating coupons or promo codes, applying or validating a code at checkout, or debugging a discount that won't apply.
 ---
 
 # Discounts and Promotions

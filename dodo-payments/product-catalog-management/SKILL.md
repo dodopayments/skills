@@ -1,6 +1,6 @@
 ---
 name: product-catalog-management
-description: Guide for creating and managing products, pricing, add-ons, product collections, images, and digital product delivery
+description: Dodo Payments product catalog management, covering products with one_time_price, recurring_price, or usage_based_price, add-ons, product collections, product images, and digital file delivery. Use when creating or updating products, plans, or prices, building a storefront, uploading images, attaching downloadable files, or debugging a failed product update.
 ---
 
 # Product Catalog Management

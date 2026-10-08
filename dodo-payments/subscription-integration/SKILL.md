@@ -1,6 +1,6 @@
 ---
 name: subscription-integration
-description: Guide for managing recurring subscriptions after checkout, including trials, lifecycle states, plan changes, cancellation, failed-payment recovery, proration, mandates, and on-demand charges.
+description: Dodo Payments subscription lifecycle after checkout, covering trials, statuses like active, on_hold, and cancelled, plan upgrades and downgrades, proration, cancellation, failed-payment recovery, mandates, and on-demand charges. Use when managing recurring billing, plan changes, dunning, or off-session charging; use checkout-integration to start the purchase.
 ---
 
 # Dodo Payments Subscription Integration

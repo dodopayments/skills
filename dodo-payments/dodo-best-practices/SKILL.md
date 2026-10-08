@@ -1,6 +1,6 @@
 ---
 name: dodo-best-practices
-description: Guide for initial Dodo Payments setup, including SDK installation, test and live environments, API keys, and the canonical checkout-to-webhook architecture.
+description: Starting point for any Dodo Payments integration, covering Merchant of Record basics, SDK installation and client setup, test and live environments, API keys, and the canonical checkout-to-webhook flow. Use when starting a new integration, initializing the dodopayments client, choosing an architecture, or unsure which Dodo Payments skill applies.
 ---
 
 # Dodo Payments Integration Guide

@@ -1,6 +1,6 @@
 ---
 name: refunds-and-disputes
-description: Guide for issuing refunds, handling disputes and chargebacks, and reconciling customer access with Dodo Payments
+description: Dodo Payments refunds and disputes, covering full and partial refunds, refund statuses, dispute and chargeback lifecycle events, evidence, and revoking or restoring customer access. Use when issuing a refund, handling refund or dispute webhooks, responding to a chargeback, or reconciling entitlements after a payment reversal.
 ---
 
 # Refunds and Disputes
@@ -51,18 +51,13 @@ console.log(refund.status); // 'pending', 'succeeded', 'review', or 'failed'
 To refund only specific items from a payment, pass the `items` array with each item ID and the amount to refund in the smallest currency unit. Omit `amount` to refund the whole item:
 
 ```typescript
-const items = [
-  { item_id: 'item_1' }, // no amount: the whole item is refunded
-  { item_id: 'item_2', amount: 2500 },
-];
-const partialRefund = await client.refunds.create({ payment_id: 'pay_abc123', items });
-
-// The refund webhook does not echo the items, so record which items this
-// refund fully covers; the webhook handler revokes access to exactly those.
-await saveRefundItems(
-  partialRefund.refund_id,
-  items.filter((item) => item.amount === undefined).map((item) => item.item_id),
-);
+const partialRefund = await client.refunds.create({
+  payment_id: 'pay_abc123',
+  items: [
+    { item_id: 'item_1' }, // no amount: the whole item is refunded
+    { item_id: 'item_2', amount: 2500 },
+  ],
+});
 ```
 
 ### Refund statuses
@@ -147,9 +142,14 @@ async function handleRefundEvent(event: WebhookEvent) {
       // Full refund: nothing in the payment is still paid for
       await revokeCustomerAccess(refund.customer.customer_id);
     } else {
-      // Partial refund: keep access to the retained items, but remove access
-      // to any item this refund covered in full (saved when it was created)
-      const fullyRefundedItemIds = await getFullyRefundedItems(refund.refund_id);
+      // Partial refund: keep access to items that are still paid for, and
+      // remove it for any item with nothing left to refund. Reading the line
+      // items covers every case - an omitted amount, an explicit amount equal
+      // to the item price, or several partial refunds that add up to it.
+      const { items } = await client.payments.retrieveLineItems(refund.payment_id);
+      const fullyRefundedItemIds = items
+        .filter((item) => item.refundable_amount === 0)
+        .map((item) => item.items_id);
       await revokeItemAccess(refund.customer.customer_id, fullyRefundedItemIds);
     }
     await updateRefundRecord(refund.refund_id, 'succeeded');
