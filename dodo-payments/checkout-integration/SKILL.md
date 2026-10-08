@@ -368,7 +368,8 @@ There is no `session_id` parameter. Treat `processing`/missing status as "unknow
 
 ### Verify Payment Server-Side
 
-Do not trust the browser redirect. Use the Express webhook route above: it receives the raw signed body
+Do not trust the browser redirect. Use the Express webhook route in
+[references/server-examples.md](references/server-examples.md#expressjs): it receives the raw signed body
 before `express.json()`, fulfills one-time purchases on verified `payment.succeeded` using
 `event.data.customer.customer_id`, and grants subscription access only on verified `subscription.active`.
 

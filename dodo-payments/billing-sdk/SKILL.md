@@ -77,7 +77,8 @@ From the current official registry, grouped by purpose:
 
 Most blocks have a published usage example and props table on their page at
 [billingsdk.com/docs/components](https://billingsdk.com/docs/components) (for example `subscription-management`
-and `billing-settings`); `pricing-table-one` is reproduced below. The generated file's props type is still
+and `billing-settings`); `pricing-table-one` is reproduced in
+[references/pricing-page.md](references/pricing-page.md). The generated file's props type is still
 authoritative for the version you installed, so read it after running `add`.
 
 ## Server client

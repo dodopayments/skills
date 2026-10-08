@@ -265,7 +265,7 @@ If the app crashes or is backgrounded during checkout, the session is abandoned.
 
 // CORRECT: reconcile on launch and after every cancelled/pending result,
 // and clear the record only once the backend reports a final outcome.
-await reconcileAbandonedSession(); // defined in the React Native section above
+await reconcileAbandonedSession(); // defined in references/react-native.md
 ```
 
 ## Package names
