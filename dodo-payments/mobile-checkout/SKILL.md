@@ -317,6 +317,8 @@ android {
 import com.dodopayments.checkout.CheckoutParams
 import com.dodopayments.checkout.CheckoutStatus
 import com.dodopayments.checkout.DodoCheckout
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 
 // The activity-result launcher survives process death.
 private val checkoutLauncher =
@@ -324,8 +326,10 @@ private val checkoutLauncher =
         when (result.status) {
             CheckoutStatus.SUCCEEDED -> showSuccess(result.paymentId) // UI hint only; verify on the backend
             CheckoutStatus.FAILED -> showFailure()
-            CheckoutStatus.CANCELLED -> reconcileAbandonedSession() // outcome unknown, not a failure
-            CheckoutStatus.PENDING -> reconcileAbandonedSession()
+            // Outcome unknown, not a failure. reconcileAbandonedSession() suspends
+            // (it calls your backend), so launch it from the lifecycle scope.
+            CheckoutStatus.CANCELLED, CheckoutStatus.PENDING ->
+                lifecycleScope.launch { reconcileAbandonedSession() }
             CheckoutStatus.EXPIRED -> showExpired()
         }
     }
