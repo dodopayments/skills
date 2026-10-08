@@ -44,6 +44,8 @@ const client = new DodoPayments({
 ```
 
 ```python
+import os
+
 from dodopayments import DodoPayments
 
 client = DodoPayments(
@@ -74,7 +76,8 @@ Use these card numbers in test mode with expiry **06/32** (or **12/34**) and CVV
 | Success | `4242 4242 4242 4242` | Payment succeeds |
 | Decline | `4000 0000 0000 0002` | Payment declined |
 | Decline (insufficient funds) | `4000 0000 0000 9995` | Insufficient funds error |
-| Decline (lost card) | `4000 0000 0000 9987` | Lost card error |
+
+Only use cards listed on the [Testing Process](https://docs.dodopayments.com/miscellaneous/testing-process) page; other Stripe-style test numbers (for example "lost card" variants) are not documented for Dodo.
 
 ### Subscription renewal failure
 
@@ -164,7 +167,9 @@ dodo wh trigger payment.success http://localhost:3000/webhook
 
 Sends a realistic mock payload for a chosen event. It runs offline and works even while logged out — which is the tell for the part that matters: **these payloads are unsigned.** `unwrap()` rejects them because there is no valid signature to verify.
 
-Use `unsafeUnwrap()` for triggered events only, and never on an endpoint that also receives real traffic. Event names are `<category>.<event>`, for example `payment.success`, `subscription.active`, or `dispute.opened`.
+Use `unsafeUnwrap()` for triggered events only, and never on an endpoint that also receives real traffic. Trigger names are `<category>.<event>`, for example `payment.success`, `subscription.active`, or `dispute.opened`.
+
+**Trigger names are not always the payload `type`.** `payment.success` delivers `type: "payment.succeeded"`, `refund.success` delivers `refund.succeeded`, and `licence.created` delivers `license_key.created`. Switch on the payload types in your handler; a `case 'payment.success'` never matches.
 
 As with `listen`, both arguments are required in direct mode; `/wh trigger` inside the TUI opens a wizard instead.
 
@@ -333,5 +338,5 @@ Test keys (prefixed `dodo_test_`) only work with `https://test.dodopayments.com`
 
 - [Testing Process](https://docs.dodopayments.com/miscellaneous/testing-process)
 - [Test vs. Live Mode](https://docs.dodopayments.com/miscellaneous/test-mode-vs-live-mode)
-- [Webhook Integration](https://docs.dodopayments.com/developer-resources/webhooks/intents/introduction)
-- [Dodo CLI](https://docs.dodopayments.com/developer-resources/cli)
+- [Webhook Integration](https://docs.dodopayments.com/developer-resources/webhooks)
+- [Dodo CLI](https://docs.dodopayments.com/developer-resources/sdks/cli)
