@@ -275,10 +275,15 @@ export async function checkLicense(): Promise<boolean> {
       license_key_instance_id: license.instanceId,
     });
 
-    if (response.valid) {
-      store.set('license', { ...license, lastValidatedAt: new Date().toISOString() });
+    if (!response.valid) {
+      // An explicit "invalid" from the server (revoked key, deactivated
+      // instance) ends the license: drop the cache so a later offline start
+      // cannot fall back to the grace period.
+      store.delete('license');
+      return false;
     }
-    return response.valid;
+    store.set('license', { ...license, lastValidatedAt: new Date().toISOString() });
+    return true;
   } catch (error) {
     // Only a connection failure (offline, DNS, timeout) earns the grace period.
     // Any other API error - a revoked key, a deactivated instance - is a real

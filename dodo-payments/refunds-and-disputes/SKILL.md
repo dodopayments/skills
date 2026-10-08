@@ -51,13 +51,18 @@ console.log(refund.status); // 'pending', 'succeeded', 'review', or 'failed'
 To refund only specific items from a payment, pass the `items` array with each item ID and the amount to refund in the smallest currency unit. Omit `amount` to refund the whole item:
 
 ```typescript
-const partialRefund = await client.refunds.create({
-  payment_id: 'pay_abc123',
-  items: [
-    { item_id: 'item_1', amount: 1000 },
-    { item_id: 'item_2', amount: 2500 },
-  ],
-});
+const items = [
+  { item_id: 'item_1' }, // no amount: the whole item is refunded
+  { item_id: 'item_2', amount: 2500 },
+];
+const partialRefund = await client.refunds.create({ payment_id: 'pay_abc123', items });
+
+// The refund webhook does not echo the items, so record which items this
+// refund fully covers; the webhook handler revokes access to exactly those.
+await saveRefundItems(
+  partialRefund.refund_id,
+  items.filter((item) => item.amount === undefined).map((item) => item.item_id),
+);
 ```
 
 ### Refund statuses
@@ -138,10 +143,14 @@ app.post('/webhook', async (req, res) => {
 async function handleRefundEvent(event: WebhookEvent) {
   if (event.type === 'refund.succeeded') {
     const refund = event.data;
-    // Revoke access only for a full refund; a partial refund leaves the
-    // customer entitled to the items that were not refunded
     if (!refund.is_partial) {
+      // Full refund: nothing in the payment is still paid for
       await revokeCustomerAccess(refund.customer.customer_id);
+    } else {
+      // Partial refund: keep access to the retained items, but remove access
+      // to any item this refund covered in full (saved when it was created)
+      const fullyRefundedItemIds = await getFullyRefundedItems(refund.refund_id);
+      await revokeItemAccess(refund.customer.customer_id, fullyRefundedItemIds);
     }
     await updateRefundRecord(refund.refund_id, 'succeeded');
   }

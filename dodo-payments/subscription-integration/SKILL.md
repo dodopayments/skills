@@ -393,6 +393,12 @@ export async function POST(req: NextRequest) {
     case 'subscription.on_hold':
       await notifyPaymentFailed(event.data.customer.customer_id);
       break;
+    case 'subscription.paused':
+      await revokeAccess(event.data.customer.customer_id);
+      break;
+    case 'subscription.unpaused':
+      await grantAccess(event.data.customer.customer_id, event.data.product_id);
+      break;
     case 'subscription.cancelled':
       if (event.data.cancel_at_next_billing_date) {
         await scheduleAccessRevocation(event.data.subscription_id, new Date(event.data.next_billing_date));

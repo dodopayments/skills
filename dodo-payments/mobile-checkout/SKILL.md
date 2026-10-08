@@ -275,10 +275,19 @@ case .expired:   showExpired()
 ### Abandoned sessions
 
 ```swift
-if let abandoned = DodoCheckout.getAbandonedSession() {
-    // Ask your backend for the outcome of abandoned.sessionId and show it.
-    // Clear the record only after the outcome is final:
-    DodoCheckout.clearAbandonedSession()
+func reconcileAbandonedSession() async {
+    guard let abandoned = DodoCheckout.getAbandonedSession() else { return }
+
+    // Your backend calls GET /checkouts/{sessionId} and returns payment_status.
+    let outcome = await fetchCheckoutOutcome(abandoned.sessionId)
+    switch outcome {
+    case "succeeded", "failed", "expired":
+        showOutcome(outcome)
+        // Clear only once the outcome is final.
+        DodoCheckout.clearAbandonedSession()
+    default:
+        showPending() // still pending - keep the record and check again later
+    }
 }
 ```
 
@@ -332,10 +341,18 @@ checkoutLauncher.launch(
 ### Abandoned sessions
 
 ```kotlin
-DodoCheckout.getAbandonedSession(context)?.let { abandoned ->
-    // Ask your backend for the outcome of abandoned.sessionId and show it.
-    // Clear the record only after the outcome is final:
-    DodoCheckout.clearAbandonedSession(context)
+suspend fun reconcileAbandonedSession() {
+    val abandoned = DodoCheckout.getAbandonedSession(context) ?: return
+
+    // Your backend calls GET /checkouts/{sessionId} and returns payment_status.
+    when (val outcome = fetchCheckoutOutcome(abandoned.sessionId)) {
+        "succeeded", "failed", "expired" -> {
+            showOutcome(outcome)
+            // Clear only once the outcome is final.
+            DodoCheckout.clearAbandonedSession(context)
+        }
+        else -> showPending() // still pending - keep the record and check again later
+    }
 }
 ```
 
