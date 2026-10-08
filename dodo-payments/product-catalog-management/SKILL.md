@@ -131,6 +131,8 @@ const product = await client.products.retrieve('pdt_pro_bundle');
 
 `PATCH /products/{id}` (`client.products.update`) accepts the name, description, and metadata, and also `price`, `tax_category`, and `pricing_mode`. Every field is optional; omitted fields stay unchanged.
 
+Two limits apply. The **pricing model is immutable**: you can edit the amount, but you cannot turn a one-time product into a subscription or usage-based one (or back) - create a new product instead. And a price edit only changes what **new** customers pay: existing subscriptions keep the price they were created with, so move them explicitly with Change Plan (`client.subscriptions.changePlan(...)`).
+
 ```typescript
 await client.products.update('pdt_pro_bundle', {
   name: 'Pro Bundle (Updated)',
@@ -309,7 +311,9 @@ For country or currency-specific pricing, use the `localized-pricing` skill. Do 
 
 **Expecting a delete endpoint:** Products don't have a delete method. Archive them instead. Archived products remain in your history for reconciliation.
 
-**Assuming a live product's price is frozen:** `PATCH /products/{id}` accepts `price`, `tax_category`, and `pricing_mode`, so you can reprice an existing product with `client.products.update(...)` instead of creating a new one.
+**Trying to change the pricing model:** You cannot switch a product between one-time, subscription, and usage-based pricing (for example `one_time_price` to `recurring_price`). Create a new product with the model you need.
+
+**Expecting a price edit to reprice existing subscribers:** `client.products.update(...)` changes the amount for new customers only. Existing subscriptions renew at the price they were created with; move them with `client.subscriptions.changePlan(...)`.
 
 **Hardcoding prices in the client:** Always fetch the product catalog from the API. Prices change, and your client code will become stale. Read `client.products.retrieve(id)` to get the current price.
 

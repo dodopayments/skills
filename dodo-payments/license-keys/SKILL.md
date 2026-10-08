@@ -280,10 +280,17 @@ export async function checkLicense(): Promise<boolean> {
     }
     return response.valid;
   } catch (error) {
-    // Network failure: trust the cached result only within a grace period
-    // measured from the LAST SUCCESSFUL validation, not from activation -
-    // otherwise a key revoked yesterday keeps working offline for 30 days
-    // after activation, and an old activation gets no grace at all.
+    // Only a connection failure (offline, DNS, timeout) earns the grace period.
+    // Any other API error - a revoked key, a deactivated instance - is a real
+    // answer from the server, so fail closed.
+    if (!(error instanceof DodoPayments.APIConnectionError)) {
+      return false;
+    }
+
+    // Trust the cached result only within a grace period measured from the
+    // LAST SUCCESSFUL validation, not from activation - otherwise a key revoked
+    // yesterday keeps working offline for 30 days after activation, and an old
+    // activation gets no grace at all.
     const lastValidated = new Date(license.lastValidatedAt);
     const daysSinceValidation = (Date.now() - lastValidated.getTime()) / (1000 * 60 * 60 * 24);
 

@@ -297,7 +297,7 @@ If the same `idempotency_key` already exists, the API can return `409`. Treat th
 
 ## Deduct credits manually
 
-Use the same method with `entry_type: 'debit'`. Debits consume the oldest grants first (FIFO) and can return `400` when the balance is insufficient.
+Use the same method with `entry_type: 'debit'`. Debits consume the earliest-expiring grants first and can return `400` when the balance is insufficient.
 
 ```typescript
 async function deductJobCredits(

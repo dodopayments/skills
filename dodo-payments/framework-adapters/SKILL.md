@@ -23,9 +23,9 @@ Each adapter exposes three handler families:
 
 - **Checkout:** static (GET only), dynamic (POST, creates a payment or subscription via the deprecated `POST /payments` / `POST /subscriptions` endpoints - existing integrations only), or session (POST with a checkout session payload - use this for new integrations).
 - **CustomerPortal:** generates a time-bound portal session link.
+- **Webhooks:** verifies webhook signatures and dispatches typed events.
 
 > **Security - CustomerPortal does not authenticate.** Every `CustomerPortal` handler opens the portal for whatever `?customer_id=` it receives. Mounted as-is, any visitor can open any customer's portal by guessing or enumerating IDs. Put the route behind your own authentication and resolve the customer ID **server-side from the signed-in session**; never accept it from the client. The portal examples below do this.
-- **Webhooks:** verifies webhook signatures and dispatches typed events.
 
 **Export names are not uniform across adapters.** Most export `Checkout` / `CustomerPortal` / `Webhooks`, but two differ, and the return shapes differ as well. Check this table before writing imports:
 
