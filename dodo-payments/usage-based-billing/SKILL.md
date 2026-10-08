@@ -181,7 +181,7 @@ async function trackBatchUsage(
     customerId: string;
     eventName: string;
     occurredAt: string;
-    metadata: Record<string, string>;
+    metadata: Record<string, string | number | boolean>;
   }>
 ) {
   const formattedEvents = events.map((event) => ({
@@ -301,10 +301,11 @@ async function callAI(
       customer_id: customerId,
       event_name: 'ai.tokens',
       timestamp: completedAt,
+      // Aggregated properties (Sum/Max/Last) must be numbers, not strings.
       metadata: {
-        tokens: response.usage.total_tokens.toString(),
-        prompt_tokens: response.usage.prompt_tokens.toString(),
-        completion_tokens: response.usage.completion_tokens.toString(),
+        tokens: response.usage.total_tokens,
+        prompt_tokens: response.usage.prompt_tokens,
+        completion_tokens: response.usage.completion_tokens,
         model: 'gpt-4',
       }
     }]
@@ -331,9 +332,10 @@ async function updateStorageUsage(
       customer_id: customerId,
       event_name: 'storage.snapshot',
       timestamp: capturedAt,
+      // Numeric values: a string property does not aggregate.
       metadata: {
-        bytes: bytesUsed.toString(),
-        gb: (bytesUsed / 1024 / 1024 / 1024).toFixed(2),
+        bytes: bytesUsed,
+        gb: Number((bytesUsed / 1024 / 1024 / 1024).toFixed(2)),
       }
     }]
   });

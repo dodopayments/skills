@@ -48,8 +48,10 @@ License keys authorize access to your digital products. Use them for software li
 ```typescript
 import DodoPayments from 'dodopayments';
 
-// No API key needed for public endpoints
-const client = new DodoPayments();
+// The license endpoints are public and don't check the token, but the SDK
+// constructor requires a value. Never ship your secret API key in client software.
+// Set the environment explicitly: the SDK defaults to live_mode.
+const client = new DodoPayments({ bearerToken: 'public', environment: 'test_mode' });
 
 async function activateLicense(licenseKey: string, deviceName: string) {
   try {
@@ -80,7 +82,7 @@ Response includes `id` (instance ID), `business_id`, `name`, `license_key_id`, `
 ```typescript
 import DodoPayments from 'dodopayments';
 
-const client = new DodoPayments();
+const client = new DodoPayments({ bearerToken: 'public', environment: 'test_mode' }); // public endpoints: placeholder token; use 'live_mode' in production
 
 async function validateLicense(licenseKey: string) {
   try {
@@ -102,7 +104,7 @@ Optional: pass `license_key_instance_id` to validate a specific instance.
 ```typescript
 import DodoPayments from 'dodopayments';
 
-const client = new DodoPayments();
+const client = new DodoPayments({ bearerToken: 'public', environment: 'test_mode' }); // public endpoints: placeholder token; use 'live_mode' in production
 
 async function deactivateLicense(licenseKey: string, instanceId: string) {
   try {
@@ -227,7 +229,7 @@ import DodoPayments from 'dodopayments';
 import os from 'os';
 
 const store = new Store();
-const client = new DodoPayments();
+const client = new DodoPayments({ bearerToken: 'public', environment: 'test_mode' }); // public endpoints: placeholder token; use 'live_mode' in production
 
 interface LicenseInfo {
   key: string;
@@ -384,7 +386,7 @@ interface CliStore {
 
 // Typing the store keeps `config.get('license')` strongly typed at every call site.
 const config = new Conf<CliStore>({ projectName: 'your-cli' });
-const client = new DodoPayments();
+const client = new DodoPayments({ bearerToken: 'public', environment: 'test_mode' }); // public endpoints: placeholder token; use 'live_mode' in production
 
 export async function activate(licenseKey: string): Promise<void> {
   const machineId = machineIdSync();
@@ -508,7 +510,7 @@ program.parse();
 
 ### Handle license key delivery
 
-When a product with licensing enabled is purchased, an `entitlement_grant.delivered` webhook fires with the license key details:
+When a product with licensing enabled is purchased, an auto-fulfilled key arrives as `entitlement_grant.created` with `status: "Delivered"` and a `license_key` object; no separate `entitlement_grant.delivered` follows. `entitlement_grant.delivered` fires only when a grant moves to `Delivered` later (for example, when you manually fulfill a `Pending` grant, or a revoked grant is restored), so handle both:
 
 Persist a local license-to-subscription association during fulfillment. Cancellation handling must query that association by `subscription_id`; filtering only by customer would also revoke keys for unrelated products or subscriptions.
 
@@ -533,28 +535,33 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    if (event.type === 'entitlement_grant.delivered') {
+    if (
+      (event.type === 'entitlement_grant.created' || event.type === 'entitlement_grant.delivered') &&
+      event.data.status === 'Delivered'
+    ) {
       const { customer_id, id, license_key } = event.data;
 
-      // Delivered grants for other entitlement types do not include a license key.
+      // Grants for other entitlement types (and Pending manual grants) have no license key.
       if (!license_key) {
         return NextResponse.json({ received: true });
       }
 
-      // Store in your database
-      await prisma.license.create({
-        data: {
-          externalId: id,
-          key: license_key.key,
-          customerId: customer_id,
-          expiresAt: license_key.expires_at ? new Date(license_key.expires_at) : null,
-          activationsLimit: license_key.activations_limit,
-          status: 'active',
-        },
+      // Store in your database. Upsert on the grant ID so retries and a restored
+      // grant (entitlement_grant.delivered again for the same grant) are idempotent.
+      // Dodo emails the key to the customer itself, so there is no email to send
+      // here - which also means a retried delivery cannot send a duplicate.
+      const record = {
+        key: license_key.key,
+        customerId: customer_id,
+        expiresAt: license_key.expires_at ? new Date(license_key.expires_at) : null,
+        activationsLimit: license_key.activations_limit,
+        status: 'active',
+      };
+      await prisma.license.upsert({
+        where: { externalId: id },
+        create: { externalId: id, ...record },
+        update: record,
       });
-
-      // Send email with activation instructions
-      await sendLicenseEmail(customer_id, license_key.key);
     }
 
     if (event.type === 'subscription.cancelled' || event.type === 'subscription.expired') {
@@ -585,7 +592,8 @@ export async function POST(req: NextRequest) {
 
 **Webhook events:**
 
-- `entitlement_grant.delivered` — license key issued (current, recommended)
+- `entitlement_grant.created` — grant created; `status: "Delivered"` with a `license_key` for auto-fulfilled keys (the primary issuance event), `status: "Pending"` with no key for manual fulfillment
+- `entitlement_grant.delivered` — an existing grant moved to `Delivered` (manual fulfillment, or a revoked grant restored); not sent for auto-fulfilled keys
 - `entitlement_grant.revoked` — license key revoked
 - `license_key.created` — legacy event (still fires, but use `entitlement_grant.*` for new integrations)
 - `subscription.cancelled` — disable only this subscription's keys for immediate cancellation

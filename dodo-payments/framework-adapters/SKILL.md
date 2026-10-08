@@ -164,6 +164,8 @@ import { checkoutHandler } from "@dodopayments/express";
 import { dodoEnvironment } from "./lib/dodo-env";
 
 const app = express();
+// Required before the POST route: the session/dynamic handlers read req.body.
+app.use(express.json());
 
 app.get("/api/checkout", checkoutHandler({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
@@ -196,7 +198,10 @@ app.get("/api/customer-portal", CustomerPortal({
 ```typescript
 import { Webhooks } from "@dodopayments/express";
 
-app.use(express.raw({ type: "application/json" }));
+// The Express handler verifies the signature against the PARSED req.body, so it
+// needs express.json() (skip this line if already registered). Do NOT use express.raw() here - the
+// handler would see a Buffer and reject every request.
+app.use(express.json());
 
 app.post("/api/webhook", Webhooks({
   webhookKey: process.env.DODO_PAYMENTS_WEBHOOK_KEY,
@@ -428,15 +433,26 @@ export const action = ({ request }: ActionFunctionArgs) =>
 import { Checkout } from "@dodopayments/sveltekit";
 import { DODO_PAYMENTS_API_KEY, DODO_PAYMENTS_RETURN_URL, DODO_PAYMENTS_ENVIRONMENT } from "$env/static/private";
 
-const checkoutHandler = Checkout({
+const dodoEnvironment = DODO_PAYMENTS_ENVIRONMENT === "live_mode" ? "live_mode" : "test_mode";
+
+// Checkout() returns { GET, POST }, not a handler. Export GET from a "static"
+// handler - the GET of a "session"/"dynamic" handler returns 400.
+const staticCheckout = Checkout({
   bearerToken: DODO_PAYMENTS_API_KEY,
   returnUrl: DODO_PAYMENTS_RETURN_URL,
-  environment: DODO_PAYMENTS_ENVIRONMENT,
+  environment: dodoEnvironment,
+  type: "static",
+});
+
+const sessionCheckout = Checkout({
+  bearerToken: DODO_PAYMENTS_API_KEY,
+  returnUrl: DODO_PAYMENTS_RETURN_URL,
+  environment: dodoEnvironment,
   type: "session",
 });
 
-export const GET = checkoutHandler;
-export const POST = checkoutHandler;
+export const GET = staticCheckout.GET;
+export const POST = sessionCheckout.POST;
 ```
 
 ### Webhooks
@@ -591,20 +607,74 @@ app.use(dodopayments);
 export default app;
 ```
 
-Then use the component in your actions and HTTP routes:
+Run `npx convex dev` once to generate `components.dodopayments`. `identify` needs an app-owned lookup from the signed-in user to their Dodo customer ID. This assumes a `customers` table with `authId` and `dodoCustomerId` fields and a `by_auth_id` index; adapt it to your schema:
 
 ```typescript
-// convex/checkout.ts
-import { mutation } from "./_generated/server";
-import { components } from "./_generated/server";
+// convex/customers.ts
+import { internalQuery } from "./_generated/server";
+import { v } from "convex/values";
 
-export const createCheckoutSession = mutation({
-  args: { customerId: v.string() },
-  handler: async (ctx, args) => {
-    const dodo = components.dodopayments;
-    return dodo.checkout.createSession(ctx, {
-      customerId: args.customerId,
-      // ... checkout params
+export const getByAuthId = internalQuery({
+  args: { authId: v.string() },
+  handler: async (ctx, { authId }) =>
+    ctx.db
+      .query("customers")
+      .withIndex("by_auth_id", (q) => q.eq("authId", authId))
+      .unique(),
+});
+```
+
+Then create a `DodoPayments` client in a local module and export its API methods:
+
+```typescript
+// convex/dodo.ts
+import { DodoPayments } from "@dodopayments/convex";
+import { components, internal } from "./_generated/api";
+
+const apiKey = process.env.DODO_PAYMENTS_API_KEY;
+if (!apiKey) throw new Error("DODO_PAYMENTS_API_KEY is not set");
+
+export const dodo = new DodoPayments(components.dodopayments, {
+  // Maps the signed-in Convex user to a Dodo customer; used by customerPortal.
+  identify: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) return null;
+    const customer = await ctx.runQuery(internal.customers.getByAuthId, {
+      authId: identity.subject,
+    });
+    return customer ? { dodoCustomerId: customer.dodoCustomerId } : null;
+  },
+  apiKey,
+  environment: process.env.DODO_PAYMENTS_ENVIRONMENT === "live_mode" ? "live_mode" : "test_mode",
+});
+
+export const { checkout, customerPortal } = dodo.api();
+```
+
+Call `checkout` from an **action** (mutations cannot make network calls), passing the checkout session fields in `payload`. The client sends a plan slug; the server maps it to a product ID and owns the return URL, so a caller cannot pick an arbitrary product or redirect target:
+
+```typescript
+// convex/payments.ts
+import { action } from "./_generated/server";
+import { v } from "convex/values";
+import { checkout } from "./dodo";
+
+// Public plan slug -> Dodo product ID. Never accept a product_id from the client.
+const PRODUCT_IDS: Readonly<Record<string, string>> = {
+  starter: "pdt_starter_monthly",
+  pro: "pdt_pro_monthly",
+};
+
+export const createCheckout = action({
+  args: { plan: v.string() },
+  handler: async (ctx, { plan }) => {
+    if (!Object.hasOwn(PRODUCT_IDS, plan)) throw new Error(`Unknown plan: ${plan}`);
+    // Returns { checkout_url }
+    return await checkout(ctx, {
+      payload: {
+        product_cart: [{ product_id: PRODUCT_IDS[plan], quantity: 1 }],
+        return_url: process.env.DODO_PAYMENTS_RETURN_URL,
+      },
     });
   },
 });
@@ -618,7 +688,7 @@ Convex only supports session checkout, not static or dynamic modes.
 
 2. **Wrong webhook variable name:** Check whether your adapter uses `DODO_PAYMENTS_WEBHOOK_KEY` or `DODO_PAYMENTS_WEBHOOK_SECRET`. The docs are inconsistent; use the name your adapter actually references.
 
-3. **Forgetting raw body preservation:** Webhook handlers must receive the raw request body, not a re-parsed JSON object. Fastify requires an explicit string body parser; Express needs `express.raw()`; other frameworks handle this automatically. Webhook signature verification is covered in the `webhook-integration` skill.
+3. **Forgetting raw body preservation:** Webhook handlers must receive the raw request body, not a re-parsed JSON object. Fastify requires an explicit string body parser; other frameworks handle this automatically. **Express is the exception:** its `Webhooks` handler verifies against the parsed `req.body`, so register `express.json()` before the route and do not use `express.raw()`, which makes every verification fail. Webhook signature verification is covered in the `webhook-integration` skill.
 
 4. **Mixing framework conventions:** Each framework has its own request/response shape. Don't try to use a Next.js handler in Express or vice versa. Use the adapter for your framework.
 
