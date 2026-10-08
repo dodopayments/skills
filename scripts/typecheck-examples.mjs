@@ -224,6 +224,20 @@ function listSkillDirs() {
 }
 
 /**
+ * Every markdown file a skill ships: SKILL.md plus any references/*.md it links
+ * to. Code moved out of SKILL.md for length must stay type-checked.
+ */
+function listSkillDocs() {
+    return listSkillDirs().flatMap((dir) => {
+        const refs = join(SKILLS_DIR, dir, 'references');
+        const extra = existsSync(refs)
+            ? readdirSync(refs).filter((f) => f.endsWith('.md')).sort().map((f) => `${dir}/references/${f}`)
+            : [];
+        return [`${dir}/SKILL.md`, ...extra];
+    });
+}
+
+/**
  * Extract compilable TS blocks with their 1-based start line in the source file.
  */
 function extractBlocks(md) {
@@ -280,9 +294,9 @@ function main() {
     const index = new Map();
     let n = 0;
 
-    for (const dir of listSkillDirs()) {
-        const rel = `dodo-payments/${dir}/SKILL.md`;
-        const md = readFileSync(join(SKILLS_DIR, dir, 'SKILL.md'), 'utf8');
+    for (const doc of listSkillDocs()) {
+        const rel = `dodo-payments/${doc}`;
+        const md = readFileSync(join(SKILLS_DIR, doc), 'utf8');
         for (const b of extractBlocks(md)) {
             const normalized = stripExports(normalizeElisions(b.code));
             const { imports, body: inner } = hoistImports(normalized);

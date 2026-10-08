@@ -43,56 +43,8 @@ const BANNED = [
 // Signing-string check: if a skill shows the algorithm it must include all three parts.
 const SIGNING_HINT = /webhook-id\s*\.\s*webhook-timestamp|webhook-id`?\s*\+|\$\{?webhookId\}?\./;
 
-const seenNames = new Map();
-
-/**
- * skill dir -> frontmatter description, so marketplace.json can be checked for
- * DRIFT rather than mere presence. The two are published separately; an agent
- * matches on the marketplace description but then loads the skill body, so a
- * silent divergence makes the wrong skill get selected.
- */
-const frontmatterDesc = new Map();
-
-for (const dir of dirs) {
-    const file = join(skillsDir, dir, 'SKILL.md');
-    const rel = `dodo-payments/${dir}/SKILL.md`;
-    if (!existsSync(file)) {
-        err(rel, 'missing SKILL.md');
-        continue;
-    }
-    const raw = readFileSync(file, 'utf8');
-
-    // --- frontmatter ---
-    const fm = raw.match(/^---\n([\s\S]*?)\n---\n/);
-    if (!fm) {
-        err(rel, 'missing or malformed YAML frontmatter');
-        continue;
-    }
-    const body = raw.slice(fm[0].length);
-    const nameM = fm[1].match(/^name:\s*(.+)$/m);
-    const descM = fm[1].match(/^description:\s*(.+)$/m);
-    if (!nameM) err(rel, 'frontmatter missing `name`');
-    if (!descM) err(rel, 'frontmatter missing `description`');
-
-    if (nameM) {
-        const name = nameM[1].trim();
-        if (name !== dir) err(rel, `frontmatter name "${name}" != directory "${dir}"`);
-        if (seenNames.has(name)) err(rel, `duplicate skill name "${name}" (also in ${seenNames.get(name)})`);
-        seenNames.set(name, rel);
-    }
-    if (descM) {
-        const d = descM[1].trim();
-        frontmatterDesc.set(dir, d);
-        if (d.length < 40) warn(rel, `description is very short (${d.length} chars) — weakens skill matching`);
-        if (d.length > 400) warn(rel, `description is very long (${d.length} chars)`);
-    }
-
-    // extra frontmatter keys
-    for (const line of fm[1].split('\n')) {
-        const k = line.match(/^([a-zA-Z_-]+):/);
-        if (k && !['name', 'description'].includes(k[1])) warn(rel, `unexpected frontmatter key "${k[1]}"`);
-    }
-
+/** `offset` = number of file lines before `body` (the frontmatter), so errors cite real file lines. */
+function checkBody(rel, body, offset) {
     // --- banned content ---
     // Only CODE is held to the API-shape rules. Prose is where "never do X" warnings live,
     // so prose is only flagged when it asserts the bad pattern without negating it.
@@ -104,7 +56,7 @@ for (const dir of dirs) {
     let inFence = false;
     let fenceIsNegative = false;
     lines.forEach((line, idx) => {
-        const lineNo = idx + 2; // +1 for 0-index, +1 for frontmatter offset approximation
+        const lineNo = idx + 1 + offset;
         if (/^```/.test(line)) {
             if (!inFence) {
                 // look back up to 4 non-empty lines for a negative-example marker
@@ -156,6 +108,84 @@ for (const dir of dirs) {
     // --- emoji ---
     if (/[\u{1F300}-\u{1FAFF}\u{2700}-\u{27BF}\u{2600}-\u{26FF}]/u.test(body)) {
         warn(rel, 'contains emoji (house style says none)');
+    }
+
+}
+
+const seenNames = new Map();
+
+/**
+ * skill dir -> frontmatter description, so marketplace.json can be checked for
+ * DRIFT rather than mere presence. The two are published separately; an agent
+ * matches on the marketplace description but then loads the skill body, so a
+ * silent divergence makes the wrong skill get selected.
+ */
+const frontmatterDesc = new Map();
+
+for (const dir of dirs) {
+    const file = join(skillsDir, dir, 'SKILL.md');
+    const rel = `dodo-payments/${dir}/SKILL.md`;
+    if (!existsSync(file)) {
+        err(rel, 'missing SKILL.md');
+        continue;
+    }
+    const raw = readFileSync(file, 'utf8');
+
+    // --- frontmatter ---
+    const fm = raw.match(/^---\n([\s\S]*?)\n---\n/);
+    if (!fm) {
+        err(rel, 'missing or malformed YAML frontmatter');
+        continue;
+    }
+    const body = raw.slice(fm[0].length);
+    const nameM = fm[1].match(/^name:\s*(.+)$/m);
+    const descM = fm[1].match(/^description:\s*(.+)$/m);
+    if (!nameM) err(rel, 'frontmatter missing `name`');
+    if (!descM) err(rel, 'frontmatter missing `description`');
+
+    if (nameM) {
+        const name = nameM[1].trim();
+        if (name !== dir) err(rel, `frontmatter name "${name}" != directory "${dir}"`);
+        if (seenNames.has(name)) err(rel, `duplicate skill name "${name}" (also in ${seenNames.get(name)})`);
+        seenNames.set(name, rel);
+    }
+    if (descM) {
+        const d = descM[1].trim();
+        frontmatterDesc.set(dir, d);
+        if (d.length < 40) warn(rel, `description is very short (${d.length} chars) — weakens skill matching`);
+        if (d.length > 400) warn(rel, `description is very long (${d.length} chars)`);
+    }
+
+    // extra frontmatter keys
+    for (const line of fm[1].split('\n')) {
+        const k = line.match(/^([a-zA-Z_-]+):/);
+        if (k && !['name', 'description'].includes(k[1])) warn(rel, `unexpected frontmatter key "${k[1]}"`);
+    }
+
+    checkBody(rel, body, fm[0].split('\n').length - 1);
+
+    // --- length: the Agent Skills spec caps SKILL.md at 500 lines ---
+    // A trailing newline ends the last line; it does not start another one.
+    const total = raw.split('\n').length - (raw.endsWith('\n') ? 1 : 0);
+    if (total > 500) err(rel, `SKILL.md is ${total} lines (limit 500) - move detail into references/`);
+
+    // --- references/: every file must be linked from SKILL.md, every link must resolve ---
+    const refDir = join(skillsDir, dir, 'references');
+    const refFiles = existsSync(refDir) ? readdirSync(refDir).filter((f) => f.endsWith('.md')) : [];
+    // Actual link targets only: inline `](references/x.md)` and reference-style `[id]: references/x.md`.
+    const linked = new Set(
+        [...body.matchAll(/\]\(\s*<?(?:\.\/)?(references\/[^)#\s>]+)/g), ...body.matchAll(/^\s*\[[^\]]+\]:\s*<?(?:\.\/)?(references\/[^#\s>]+)/gm)]
+            .map((m) => m[1]),
+    );
+    for (const target of linked) {
+        if (!existsSync(join(skillsDir, dir, target))) err(rel, `broken link to ${target}`);
+    }
+    for (const f of refFiles) {
+        const refRel = `dodo-payments/${dir}/references/${f}`;
+        if (!linked.has(`references/${f}`)) err(refRel, 'not linked from SKILL.md - agents will never load it');
+        const refBody = readFileSync(join(refDir, f), 'utf8');
+        if (refBody.startsWith('---\n')) err(refRel, 'reference files must not carry frontmatter (they would register as skills)');
+        checkBody(refRel, refBody, 0);
     }
 
     if (body.split('\n').length < 40) warn(rel, 'suspiciously short skill');

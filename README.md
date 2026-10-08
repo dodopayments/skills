@@ -107,9 +107,11 @@ npm run check      # validate + typecheck (TypeScript, Go, Python)
 
 **`npm run validate`** enforces structural rules: real API hostnames, correct `dodo_test_`/`dodo_live_` key
 formats, no hand-rolled webhook HMAC, no deprecated SDK calls, no type suppression, and agreement between
-each skill's directory name, its frontmatter, `marketplace.json`, and the README table.
+each skill's directory name, its frontmatter, `marketplace.json`, and the README table. It also keeps every
+`SKILL.md` within the Agent Skills 500-line limit and checks `references/`: every reference file must be linked from
+its `SKILL.md`, every link must resolve, and reference files carry no frontmatter.
 
-**`npm run typecheck`** extracts every TypeScript block from every `SKILL.md` and compiles it against the
+**`npm run typecheck`** extracts every TypeScript block from every `SKILL.md` and `references/*.md` file and compiles it against the
 real `dodopayments` types — plus the `@dodopayments/*` framework adapters, so adapter examples are checked
 rather than degrading to `any`. This is what catches wrong field and parameter names.
 
