@@ -562,46 +562,57 @@ export async function POST(req: NextRequest) {
 
     if (
       (event.type === 'entitlement_grant.created' || event.type === 'entitlement_grant.delivered') &&
-      event.data.status === 'Delivered'
+      event.data.status === 'Delivered' &&
+      event.data.license_key // other entitlement types (and Pending manual grants) have no key
     ) {
-      const { customer_id, id, license_key } = event.data;
-
-      // Grants for other entitlement types (and Pending manual grants) have no license key.
-      if (!license_key) {
-        return NextResponse.json({ received: true });
-      }
-
-      // Store in your database. Upsert on the grant ID so retries and a restored
-      // grant (entitlement_grant.delivered again for the same grant) are idempotent.
-      // Dodo emails the key to the customer itself, so there is no email to send
-      // here - which also means a retried delivery cannot send a duplicate.
-      const record = {
-        key: license_key.key,
-        customerId: customer_id,
-        expiresAt: license_key.expires_at ? new Date(license_key.expires_at) : null,
-        activationsLimit: license_key.activations_limit,
-        status: 'active',
-      };
-      await prisma.license.upsert({
-        where: { externalId: id },
-        create: { externalId: id, ...record },
-        update: record,
-      });
+      // Dodo emails the key to the customer itself, so there is no email to send here.
+      await mirrorGrant(event.data, 'active');
     }
 
     if (event.type === 'entitlement_grant.revoked') {
       // Dodo already disabled the key (cancellation, expiry, refund, on_hold,
       // pause, plan change, or manual revoke). Mirror it locally.
-      await prisma.license.updateMany({
-        where: { externalId: event.data.id },
-        data: { status: 'revoked' },
-      });
+      await mirrorGrant(event.data, 'revoked');
     }
 
     return NextResponse.json({ received: true });
   } catch (error) {
     console.error('Webhook error:', error);
     return NextResponse.json({ error: 'Invalid signature' }, { status: 401 });
+  }
+}
+
+type Grant = DodoPayments.Entitlements.EntitlementGrant;
+
+// Webhooks can arrive out of order and be retried concurrently. Apply a grant
+// only when it is newer than the stored copy (by the grant's own updated_at),
+// using a single conditional UPDATE so a stale "delivered" can never overwrite
+// a newer "revoked". If no row exists yet - including a revocation that arrives
+// before the delivery - insert one; the unique externalId makes concurrent
+// inserts safe, and a losing insert is skipped rather than overwriting.
+async function mirrorGrant(grant: Grant, status: 'active' | 'revoked') {
+  const grantUpdatedAt = new Date(grant.updated_at);
+  const fields = {
+    customerId: grant.customer_id,
+    status,
+    grantUpdatedAt,
+    ...(grant.license_key && {
+      key: grant.license_key.key,
+      expiresAt: grant.license_key.expires_at ? new Date(grant.license_key.expires_at) : null,
+      activationsLimit: grant.license_key.activations_limit,
+    }),
+  };
+
+  const { count } = await prisma.license.updateMany({
+    where: { externalId: grant.id, grantUpdatedAt: { lt: grantUpdatedAt } },
+    data: fields,
+  });
+  if (count === 0) {
+    // Either no row yet, or the stored copy is already as new or newer.
+    await prisma.license.createMany({
+      data: [{ externalId: grant.id, ...fields }],
+      skipDuplicates: true,
+    });
   }
 }
 ```
