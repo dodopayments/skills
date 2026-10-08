@@ -67,7 +67,7 @@ Get your test API key from the Dodo dashboard. Test keys are prefixed `dodo_test
 
 ### Card success and decline scenarios
 
-Use these card numbers in test mode. The expiry can be any future date; the CVC can be any three digits.
+Use these card numbers in test mode with expiry **06/32** (or **12/34**) and CVV **123**.
 
 | Scenario | Card Number | Result |
 |---|---|---|
@@ -80,18 +80,20 @@ Use these card numbers in test mode. The expiry can be any future date; the CVC 
 
 To test subscription renewal failures, use this card:
 
-| Card Number | Behavior |
-|---|---|
-| `4000 0000 0000 0069` | Renewal fails on next billing date |
+| Card Number | Expiry | CVV | Behavior |
+|---|---|---|---|
+| `4000 0000 0000 0341` | 12/34 | 123 | Declined at the subscription's next charge (renewal, upgrade, or downgrade) |
+
+Create the subscription with a success card first, then switch its payment method to this card in the Customer Portal.
 
 ### UPI (India)
 
-Test UPI success and failure with these VPAs:
+Test UPI success and failure with these VPAs. The billing country must be `IN` and the currency `INR` (non-Indian merchants also need Adaptive Currency enabled):
 
 | VPA | Result |
 |---|---|
-| `success@okhdfcbank` | Payment succeeds |
-| `failure@okhdfcbank` | Payment fails |
+| `success@upi` | Payment succeeds |
+| `failure@upi` | Payment fails |
 
 ### BNPL, wallets, and regional methods
 
@@ -184,19 +186,19 @@ Products are environment-specific. You cannot reuse a test product ID in product
 
 **Programmatic approach:**
 
-Fetch the product from test mode, extract its configuration, and create it in live mode:
+Fetch the product from test mode, extract its configuration, and create it in live mode. API keys are per mode — a test key does not authenticate against live mode and vice versa — so this needs two distinct keys:
 
 ```typescript
 // In test mode
 const testClient = new DodoPayments({
-  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  bearerToken: process.env.DODO_PAYMENTS_TEST_API_KEY,
   environment: 'test_mode',
 });
 const testProduct = await testClient.products.retrieve('pdt_test_123');
 
 // In live mode
 const liveClient = new DodoPayments({
-  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  bearerToken: process.env.DODO_PAYMENTS_LIVE_API_KEY,
   environment: 'live_mode',
 });
 const liveProduct = await liveClient.products.create({
