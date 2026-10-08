@@ -403,7 +403,8 @@ export async function POST(req: NextRequest) {
       const current = await client.subscriptions.retrieve(event.data.subscription_id);
       if (current.status === 'paused') {
         await suspendSubscriptionAccess(current.subscription_id);
-      } else if (current.status === 'active') {
+      } else if (current.status === 'active' || current.status === 'past_due') {
+        // past_due keeps access during the payment grace period
         await restoreSubscriptionAccess(current.subscription_id);
       }
       break;
