@@ -167,6 +167,11 @@ export const plans: Plan[] = [
 The generated file is the contract for your installed version; if its `Plan` differs from the above, follow
 the file. `onPlanSelect` receives only the plan `id`, so the ids here are the slugs the server maps below.
 
+This example sells **monthly plans only**: `yearlyPrice` is required by the `Plan` type and is displayed,
+but the server map below has only monthly products. To sell yearly too, create the yearly products in Dodo,
+track the table's billing-period toggle in your own state (it is not passed to `onPlanSelect`), send it with
+the plan id, and key the server map by plan and period (for example `pro:yearly`).
+
 ### 2. Product id map — server only
 
 Never let the browser choose an arbitrary `product_id`. Map the public plan slug to a `pdt_` id on the

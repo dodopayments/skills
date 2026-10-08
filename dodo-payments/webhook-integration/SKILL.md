@@ -320,14 +320,14 @@ Dodo sends 40+ event types across nine domains. Subscribe to only the events you
 
 | Event | When it fires | What to do |
 |-------|---|---|
-| `license_key.created` | License key is generated | Send key to customer (legacy; prefer `entitlement_grant.delivered`) |
+| `license_key.created` | License key is generated | Legacy; prefer `entitlement_grant.created` with `status: "Delivered"` |
 
 ### Entitlement grant events
 
 | Event | When it fires | What to do |
 |-------|---|---|
-| `entitlement_grant.created` | Grant row is created | Prepare for fulfillment |
-| `entitlement_grant.delivered` | Fulfillment completes; customer receives access | Grant platform, file, or license-key access |
+| `entitlement_grant.created` | Grant row is created. Auto-fulfilled license keys arrive here with `status: "Delivered"` and a `license_key`; no `.delivered` follows | Grant access when `status` is `Delivered`; otherwise prepare for fulfillment |
+| `entitlement_grant.delivered` | An existing grant moves to `Delivered` (manual fulfillment, or a revoked grant restored) | Grant platform, file, or license-key access |
 | `entitlement_grant.failed` | Delivery fails and is no longer retried | Alert team, inspect `error_code` and `error_message` |
 | `entitlement_grant.revoked` | Access is withdrawn | Revoke customer access, inspect `revocation_reason` |
 

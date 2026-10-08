@@ -546,8 +546,10 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ received: true });
       }
 
-      // Store in your database. Upsert on the grant ID: a restored grant fires
-      // entitlement_grant.delivered again for the same grant.
+      // Store in your database. Upsert on the grant ID so retries and a restored
+      // grant (entitlement_grant.delivered again for the same grant) are idempotent.
+      // Dodo emails the key to the customer itself, so there is no email to send
+      // here - which also means a retried delivery cannot send a duplicate.
       const record = {
         key: license_key.key,
         customerId: customer_id,
@@ -560,9 +562,6 @@ export async function POST(req: NextRequest) {
         create: { externalId: id, ...record },
         update: record,
       });
-
-      // Send email with activation instructions
-      await sendLicenseEmail(customer_id, license_key.key);
     }
 
     if (event.type === 'subscription.cancelled' || event.type === 'subscription.expired') {
