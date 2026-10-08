@@ -102,6 +102,11 @@ function checkBody(rel, body, offset) {
         if (i % 2 === 0 && f.trim() === '```') err(rel, 'untagged code fence — every block needs a language');
     });
 
+    // --- links must stay inside the skill: skills install independently, so ../ paths break ---
+    for (const m of body.matchAll(/\]\(\s*<?(\.\.\/[^)\s>]*)/g)) {
+        err(rel, `link outside the skill directory (${m[1]}) - name the other skill in prose instead`);
+    }
+
     // --- empty catch blocks ---
     if (/catch\s*\([^)]*\)\s*\{\s*\}/.test(body)) err(rel, 'empty catch block');
 
