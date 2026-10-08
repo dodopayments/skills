@@ -394,12 +394,21 @@ export async function POST(req: NextRequest) {
       await notifyPaymentFailed(event.data.customer.customer_id);
       break;
     case 'subscription.paused':
-      // Scope to this subscription: the customer may hold other active ones.
-      await suspendSubscriptionAccess(event.data.subscription_id);
+    case 'subscription.unpaused': {
+      // Pause and resume can happen in quick succession, and handlers for
+      // different events can finish in any order. Don't trust the event type:
+      // re-read the subscription and apply its CURRENT status, scoped to this
+      // subscription (the customer may hold other active ones). Run this under
+      // a per-subscription lock if your handlers execute concurrently.
+      const current = await client.subscriptions.retrieve(event.data.subscription_id);
+      if (current.status === 'paused') {
+        await suspendSubscriptionAccess(current.subscription_id);
+      } else if (current.status === 'active' || current.status === 'past_due') {
+        // past_due keeps access during the payment grace period
+        await restoreSubscriptionAccess(current.subscription_id);
+      }
       break;
-    case 'subscription.unpaused':
-      await restoreSubscriptionAccess(event.data.subscription_id);
-      break;
+    }
     case 'subscription.cancelled':
       if (event.data.cancel_at_next_billing_date) {
         await scheduleAccessRevocation(event.data.subscription_id, new Date(event.data.next_billing_date));
