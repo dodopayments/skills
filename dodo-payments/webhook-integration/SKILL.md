@@ -272,7 +272,7 @@ Signature verification requires the exact bytes Dodo sent. If you parse the JSON
 
 ## Webhook Event Catalog
 
-Dodo sends 40+ event types across nine domains. Subscribe to only the events you need.
+Dodo delivers 48 event types across ten families (payment, subscription, refund, dispute, license key, entitlement grant, credit, abandoned checkout, dunning, payout). Subscribe to only the events you need.
 
 ### Payment events
 
@@ -289,7 +289,10 @@ Dodo sends 40+ event types across nine domains. Subscribe to only the events you
 |-------|---|---|
 | `subscription.active` | Subscription becomes active; recurring charges are scheduled | Grant subscription access, send welcome email |
 | `subscription.updated` | Any field on the subscription changes | Sync changes to your database |
-| `subscription.on_hold` | Failed renewal temporarily pauses the subscription | Notify customer, prompt payment method update |
+| `subscription.past_due` | Renewal failed and the grace period opened; customer keeps access (payload has `past_due_ends_at`) | Prompt for payment before the deadline |
+| `subscription.on_hold` | Failed renewal stops renewals and revokes access | Notify customer, prompt payment method update |
+| `subscription.paused` | Subscription is deliberately paused | Suspend access while paused |
+| `subscription.unpaused` | Paused subscription is resumed | Restore access |
 | `subscription.renewed` | Subscription amount successfully deducted for a billing period | Log renewal, update next billing date |
 | `subscription.plan_changed` | Plan upgraded, downgraded, or modified | Update customer's access level or feature set |
 | `subscription.update_payment_method` | Payment method is updated | Sync the new payment method to your records |
@@ -355,6 +358,18 @@ These concern virtual credit entitlements, not monetary wallet balances.
 | `abandoned_checkout.recovered` | Customer pays through recovery link | Log recovery, update order status |
 | `dunning.started` | Dunning attempt begins after subscription enters `on_hold` | Monitor dunning progress |
 | `dunning.recovered` | Customer updates payment method and charge succeeds | Reactivate subscription, send confirmation |
+
+### Payout events
+
+These concern your own funds moving to your bank account - use them for bookkeeping, not customer access.
+
+| Event | When it fires | What to do |
+|-------|---|---|
+| `payout.created` | Payout is created (formerly emitted as `payout.not_initiated`) | Record the pending payout |
+| `payout.in_progress` | Payout processing starts | Mark as in transit |
+| `payout.on_hold` | Payout is paused or under review | Check whether more information is required |
+| `payout.success` | Payout settles to your bank account | Reconcile in accounting |
+| `payout.failed` | Payout fails; amount and fees return to your wallet | Alert finance, check bank details |
 
 ---
 
@@ -464,7 +479,7 @@ Understand how Dodo delivers webhooks:
 
 | Property | Behavior |
 |----------|----------|
-| **Timeout** | 15 seconds for connection and read |
+| **Timeout** | 30 seconds for connection and read |
 | **Success** | Any `2xx` response acknowledges delivery. Return `200` immediately after durably recording the event. |
 | **Failure** | Any non-`2xx` response triggers a retry. |
 | **Retries** | Eight attempts: immediately, 5s, 5m, 30m, 2h, 5h, 10h, 10h |
@@ -483,7 +498,7 @@ If you use a supported framework, use the official adaptor package for built-in 
 |-----------|---------|---|
 | Next.js | `@dodopayments/nextjs` | `Webhooks({ webhookKey, onPayload })` |
 | Nuxt | `@dodopayments/nuxt` | `Webhooks({ webhookKey, onPayload })` |
-| Express | `@dodopayments/express` | Middleware with raw-body parser |
+| Express | `@dodopayments/express` | `Webhooks({ webhookKey, onPayload })` - register `express.json()` first, **not** `express.raw()` (it verifies against the parsed `req.body`) |
 | Fastify | `@dodopayments/fastify` | `Webhooks({ webhookKey, onPayload })` |
 | Hono | `@dodopayments/hono` | `Webhooks({ webhookKey, onPayload })` |
 | Astro | `@dodopayments/astro` | `Webhooks({ webhookKey, onPayload })` |
@@ -549,7 +564,7 @@ Forward real test-mode events to localhost:
 dodo wh listen http://localhost:3000/webhook
 ```
 
-This creates a test webhook, opens a WebSocket relay, and forwards events with valid signatures to your local URL. Requires a test-mode API key. The URL argument is required in direct mode — bare `dodo wh listen` only works as `/wh listen` inside the TUI.
+This creates a test webhook, opens a WebSocket relay, and forwards events with the original `webhook-id`/`webhook-signature`/`webhook-timestamp` headers to your local URL. Requires a test-mode API key. The relay and CLI parse and **re-serialize** the JSON body, so if it differs byte-for-byte from the original (for example number formatting), signature verification fails even though the headers are intact - that is a relay artifact, not a bug in your verifier. The URL argument is required in direct mode — bare `dodo wh listen` only works as `/wh listen` inside the TUI.
 
 ### CLI: Unsigned mock events
 
@@ -560,6 +575,8 @@ dodo wh trigger payment.success http://localhost:3000/webhook
 ```
 
 Use `unsafeUnwrap()` only for these unsigned payloads. Both arguments are required in direct mode.
+
+Trigger names are not always the payload `type`: `payment.success` sends `type: "payment.succeeded"`, `refund.success` sends `refund.succeeded`, and `licence.created` sends `license_key.created`. Your handler must switch on the payload types. `subscription.past_due` and `subscription.unpaused` cannot be triggered.
 
 ### Tunnel
 
@@ -653,7 +670,7 @@ app.post('/webhook', async (req, res) => {
   await db.payment.create(...);
   await sendEmail(...);
   
-  res.json({ received: true }); // Dodo times out after 15s
+  res.json({ received: true }); // Dodo times out after 30s
 });
 ```
 
