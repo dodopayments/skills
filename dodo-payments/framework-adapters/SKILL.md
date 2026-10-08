@@ -21,9 +21,11 @@ Dodo publishes `@dodopayments/*` packages that wrap the core SDK with framework-
 
 Each adapter exposes three handler families:
 
-- **Checkout:** static (GET only), dynamic (POST with cart), or session (POST with pre-built session).
+- **Checkout:** static (GET only), dynamic (POST, creates a payment or subscription via the deprecated `POST /payments` / `POST /subscriptions` endpoints - existing integrations only), or session (POST with a checkout session payload - use this for new integrations).
 - **CustomerPortal:** generates a time-bound portal session link.
 - **Webhooks:** verifies webhook signatures and dispatches typed events.
+
+> **Security - CustomerPortal does not authenticate.** Every `CustomerPortal` handler opens the portal for whatever `?customer_id=` it receives. Mounted as-is, any visitor can open any customer's portal by guessing or enumerating IDs. Put the route behind your own authentication and resolve the customer ID **server-side from the signed-in session**; never accept it from the client. The portal examples below do this.
 
 **Export names are not uniform across adapters.** Most export `Checkout` / `CustomerPortal` / `Webhooks`, but two differ, and the return shapes differ as well. Check this table before writing imports:
 
@@ -34,7 +36,7 @@ Each adapter exposes three handler families:
 | `fastify` | `Checkout` | `CustomerPortal` | returns `{ getHandler, postHandler }` |
 | `sveltekit` | `Checkout` | `CustomerPortal` | returns `{ GET, POST }` / `{ GET }` |
 | `nuxt` | `checkoutHandler` (auto-imported) | `customerPortalHandler` | no import statement |
-| `convex` | `DodoPayments` component | — | `createDodoWebhookHandler` |
+| `convex` | `checkout` (from `dodo.api()`) | `customerPortal` (from `dodo.api()`, uses `identify`) | `createDodoWebhookHandler` |
 
 The adapters handle raw body preservation for webhook verification, environment variable mapping, and framework-specific request/response shapes. Checkout payload design belongs to the `checkout-integration` skill; webhook business logic belongs to `webhook-integration`; portal behavior belongs to `customer-management`.
 
@@ -71,7 +73,7 @@ DODO_PAYMENTS_RETURN_URL=https://yourdomain.com/checkout/success
 NUXT_PRIVATE_BEARER_TOKEN=dodo_test_...
 NUXT_PRIVATE_WEBHOOK_KEY=your-webhook-secret
 NUXT_PRIVATE_ENVIRONMENT=test_mode
-NUXT_PRIVATE_RETURNURL=https://yourdomain.com/checkout/success
+NUXT_PRIVATE_RETURN_URL=https://yourdomain.com/checkout/success
 ```
 
 **Convex** uses dashboard environment variables (not local `.env`):
@@ -108,6 +110,7 @@ Defaulting to `test_mode` is deliberate: a missing or misspelled variable must n
 ```typescript
 // app/api/checkout/route.ts
 import { Checkout } from "@dodopayments/nextjs";
+import { dodoEnvironment } from "@/lib/dodo-env";
 
 export const GET = Checkout({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
@@ -128,12 +131,26 @@ export const POST = Checkout({
 
 ```typescript
 // app/api/customer-portal/route.ts
+import { NextRequest } from "next/server";
 import { CustomerPortal } from "@dodopayments/nextjs";
+import { dodoEnvironment } from "@/lib/dodo-env";
+// your auth helper
+import { getSessionUser } from "@/lib/auth";
 
-export const GET = CustomerPortal({
+const portal = CustomerPortal({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   environment: dodoEnvironment,
 });
+
+export async function GET(req: NextRequest) {
+  const user = await getSessionUser(req);
+  if (!user?.dodoCustomerId) return new Response("Unauthorized", { status: 401 });
+
+  // Overwrite any client-supplied ?customer_id= with the signed-in user's ID.
+  const url = new URL(req.url);
+  url.searchParams.set("customer_id", user.dodoCustomerId);
+  return portal(new NextRequest(url, req));
+}
 ```
 
 ### Webhooks
@@ -184,13 +201,24 @@ app.post("/api/checkout", checkoutHandler({
 
 ### Customer Portal
 
-```typescript
-import { CustomerPortal } from "@dodopayments/express";
+The adapter's `CustomerPortal` reads `customer_id` from `req.query`, which you cannot safely rewrite in Express 5. Behind your auth middleware, call the SDK directly with the session's customer ID instead:
 
-app.get("/api/customer-portal", CustomerPortal({
+```typescript
+import DodoPayments from "dodopayments";
+import { dodoEnvironment } from "./lib/dodo-env";
+
+const client = new DodoPayments({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   environment: dodoEnvironment,
-}));
+});
+
+// requireAuth = your session middleware; it must set req.user.
+app.get("/api/customer-portal", requireAuth, async (req, res) => {
+  const customerId = req.user?.dodoCustomerId; // from the session, never from req.query
+  if (!customerId) return res.status(401).send("Unauthorized");
+  const session = await client.customers.customerPortal.create(customerId);
+  res.redirect(session.link);
+});
 ```
 
 ### Webhooks
@@ -274,6 +302,7 @@ fastify.post("/api/webhook", Webhooks({
 ```typescript
 import { Hono } from "hono";
 import { Checkout } from "@dodopayments/hono";
+import { dodoEnvironment } from "./lib/dodo-env";
 
 const app = new Hono();
 
@@ -294,13 +323,24 @@ app.post("/api/checkout", Checkout({
 
 ### Customer Portal
 
-```typescript
-import { CustomerPortal } from "@dodopayments/hono";
+The adapter's `CustomerPortal` reads `c.req.query("customer_id")`. Behind your auth middleware, call the SDK directly with the session's customer ID instead:
 
-app.get("/api/customer-portal", CustomerPortal({
+```typescript
+import DodoPayments from "dodopayments";
+import { dodoEnvironment } from "./lib/dodo-env";
+
+const client = new DodoPayments({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   environment: dodoEnvironment,
-}));
+});
+
+// Assumes your auth middleware ran first and stored the user on the context.
+app.get("/api/customer-portal", async (c) => {
+  const customerId = c.get("user")?.dodoCustomerId; // from the session, never from the query
+  if (!customerId) return c.text("Unauthorized", 401);
+  const session = await client.customers.customerPortal.create(customerId);
+  return c.redirect(session.link);
+});
 ```
 
 ### Webhooks
@@ -378,6 +418,7 @@ export const POST = Webhooks({
 // app/routes/api.checkout.tsx
 import { Checkout } from "@dodopayments/remix";
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "@remix-run/node";
+import { dodoEnvironment } from "~/lib/dodo-env";
 
 const checkoutHandler = Checkout({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
@@ -396,13 +437,24 @@ export const action = ({ request }: ActionFunctionArgs) => checkoutHandler(reque
 // app/routes/api.customer-portal.tsx
 import { CustomerPortal } from "@dodopayments/remix";
 import type { LoaderFunctionArgs } from "@remix-run/node";
+import { dodoEnvironment } from "~/lib/dodo-env";
+// your auth helper
+import { getSessionUser } from "~/lib/auth.server";
 
 const portalHandler = CustomerPortal({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
   environment: dodoEnvironment,
 });
 
-export const loader = ({ request }: LoaderFunctionArgs) => portalHandler(request);
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const user = await getSessionUser(request);
+  if (!user?.dodoCustomerId) return new Response("Unauthorized", { status: 401 });
+
+  // Overwrite any client-supplied ?customer_id= with the signed-in user's ID.
+  const url = new URL(request.url);
+  url.searchParams.set("customer_id", user.dodoCustomerId);
+  return portalHandler(new Request(url, request));
+};
 ```
 
 ### Webhooks
@@ -485,7 +537,7 @@ export default defineNuxtConfig({
       bearerToken: process.env.NUXT_PRIVATE_BEARER_TOKEN,
       webhookKey: process.env.NUXT_PRIVATE_WEBHOOK_KEY,
       environment: process.env.NUXT_PRIVATE_ENVIRONMENT,
-      returnUrl: process.env.NUXT_PRIVATE_RETURNURL,
+      returnUrl: process.env.NUXT_PRIVATE_RETURN_URL,
     },
   },
 });
@@ -534,7 +586,8 @@ export default Webhooks({
 ```typescript
 // src/routes/api/checkout.ts
 import { Checkout } from "@dodopayments/tanstack";
-import { dodoEnvironment } from "./lib/dodo-env";
+// src/lib/dodo-env.ts
+import { dodoEnvironment } from "../../lib/dodo-env";
 
 export const GET = Checkout({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
@@ -561,6 +614,9 @@ TanStack Start's server-route definition API has changed across releases (`creat
 
 ```typescript
 import { Checkout, CustomerPortal } from "@dodopayments/bun";
+import { dodoEnvironment } from "./lib/dodo-env";
+// your auth helper
+import { getSessionUser } from "./lib/auth";
 
 const checkoutHandler = Checkout({
   bearerToken: process.env.DODO_PAYMENTS_API_KEY,
@@ -576,14 +632,18 @@ const portalHandler = CustomerPortal({
 
 Bun.serve({
   port: 3000,
-  fetch(request) {
+  async fetch(request) {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/checkout") {
       return checkoutHandler(request);
     }
     if (url.pathname === "/api/customer-portal" && request.method === "GET") {
-      return portalHandler(request);
+      const user = await getSessionUser(request);
+      if (!user?.dodoCustomerId) return new Response("Unauthorized", { status: 401 });
+      // Overwrite any client-supplied ?customer_id= with the signed-in user's ID.
+      url.searchParams.set("customer_id", user.dodoCustomerId);
+      return portalHandler(new Request(url, request));
     }
 
     return new Response("Not Found", { status: 404 });
@@ -696,7 +756,9 @@ Convex only supports session checkout, not static or dynamic modes.
 
 6. **Skipping environment setup:** The adapters won't work without `DODO_PAYMENTS_API_KEY` and `DODO_PAYMENTS_ENVIRONMENT`. Set these before testing.
 
-7. **Using `@dodopayments/core` directly:** The core package is an internal dependency, not a documented public entry point. Use the framework adapter for your stack.
+7. **Exposing CustomerPortal unauthenticated:** The portal handlers trust `?customer_id=` from the request. Resolve the ID from the signed-in session on the server, as in the examples above, or anyone can open any customer's portal.
+
+8. **Using `@dodopayments/core` directly:** The core package is an internal dependency, not a documented public entry point. Use the framework adapter for your stack.
 
 ## Resources
 

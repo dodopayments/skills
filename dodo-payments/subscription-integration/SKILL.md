@@ -19,7 +19,7 @@ Implement recurring billing with trials, plan changes, and on-demand charging. S
 
 ## Core Concepts
 
-**Subscription lifecycle:** The six subscription statuses are `pending`, `active`, `on_hold`, `cancelled`, `failed`, and `expired`. A trialing subscription reports `active`; `subscription.renewed` is an event, not a status. Failed payments can move a subscription to `on_hold` (recoverable) or `failed` (terminal). Cancellation sets it to `cancelled` or schedules it to become `expired` at period end.
+**Subscription lifecycle:** The eight subscription statuses are `pending`, `active`, `past_due`, `on_hold`, `paused`, `cancelled`, `failed`, and `expired`. A trialing subscription reports `active`; `subscription.renewed` is an event, not a status. A failed renewal moves a subscription to `past_due` (only if you configured a grace period; access is kept) or `on_hold` (access revoked); both are recoverable. `paused` is a deliberate freeze by you or the customer. `failed` is terminal and only happens when **initial creation** fails. Cancellation sets it to `cancelled` or schedules it to become `expired` at period end.
 
 **Checkout Sessions:** The recommended path for creating subscriptions. A single-use hosted checkout that collects payment and customer data, then creates the subscription server-side.
 
@@ -89,11 +89,15 @@ const session = await client.checkoutSessions.create({
 | Status | Meaning | Transitions |
 |--------|---------|-----------|
 | `pending` | Creation in progress | → `active`, `failed` |
-| `active` | Actively renewing | → `on_hold`, `cancelled`, `expired` |
-| `on_hold` | Renewal/plan-change payment failed; recoverable | → `active` (payment method updated), `failed` (retries exhausted), `cancelled` |
+| `active` | Actively renewing | → `past_due`, `on_hold`, `paused`, `cancelled`, `expired` |
+| `past_due` | Renewal failed and the grace period is open; customer **keeps** access until `past_due_ends_at` | → `active` (debt settled), `on_hold` or `cancelled` (grace period ends, per your setting) |
+| `on_hold` | Renewal/plan-change payment failed; renewals stopped, access revoked; recoverable | → `active` (payment method updated / retry succeeds), `cancelled` |
+| `paused` | Deliberately paused by you or the customer; billing frozen, access revoked | → `active` (resumed), `cancelled` |
 | `cancelled` | Will not renew | → `expired` (at period end) |
-| `failed` | Initial mandate/payment failed; terminal | (no recovery) |
+| `failed` | Initial mandate/payment failed at creation; terminal. Never reached from `on_hold` or exhausted retries | (no recovery) |
 | `expired` | Subscription term ended | (terminal) |
+
+`past_due` only occurs if you enable a grace period; without one, a failed renewal goes straight to `on_hold`.
 
 **Trial period:** If `trial_period_days` is set, the subscription enters `active` immediately but charges nothing until the trial ends. The first charge occurs on the trial end date.
 
@@ -107,6 +111,20 @@ const session = await client.checkoutSessions.create({
 const subscription = await client.subscriptions.retrieve('sub_xxxxx');
 console.log(subscription.status, subscription.next_billing_date);
 ```
+
+### Pause and Resume
+
+Pause and resume run through `status` on the update endpoint. Send it on its own: combining `paused`/`active` with any other field is rejected with `422`.
+
+```typescript
+// Pause: renewals stop, access is revoked, next_billing_date shifts by the pause length
+await client.subscriptions.update('sub_xxxxx', { status: 'paused' });
+
+// Resume
+await client.subscriptions.update('sub_xxxxx', { status: 'active' });
+```
+
+Pausing emits `subscription.paused`; resuming emits `subscription.unpaused`. Customer self-service pause in the portal is opt-in (**Settings → Subscriptions → Allow Subscription Pause**).
 
 ### Update Payment Method
 
@@ -162,7 +180,7 @@ await client.subscriptions.changePlan('sub_xxxxx', {
 
 | Mode | Upgrade | Downgrade | Billing date |
 |------|---------|-----------|--------------|
-| `prorated_immediately` | Time-prorated charge | Time-prorated credit | Resets to change date |
+| `prorated_immediately` | Credit for unused time on the old plan, then charge a **full** new cycle (net = full new cycle − unused credit) | Same formula; a credit only remains if the unused credit exceeds the new plan price | Resets to change date |
 | `difference_immediately` | Full new-plan charge | Difference becomes credit | Resets |
 | `full_immediately` | Full new-plan charge | Full new-plan charge, no credit | Resets |
 | `do_not_bill` | No charge | No credit | Preserved |
@@ -171,6 +189,19 @@ await client.subscriptions.changePlan('sub_xxxxx', {
 
 - `prevent_change`: Keep the old plan if the charge fails.
 - `apply_change`: Apply the new plan even if payment fails (subscription may become `on_hold`).
+
+**Scheduling:** `effective_at` defaults to `'immediately'`. Pass `effective_at: 'next_billing_date'` to schedule the change (typical for downgrades) - nothing is charged now, the customer keeps the current plan until the period ends, and the pending change appears on the subscription as `scheduled_change` (cancel it with `cancelChangePlan`).
+
+```typescript
+await client.subscriptions.changePlan('sub_xxxxx', {
+  product_id: 'pdt_lower_tier',
+  quantity: 1,
+  proration_billing_mode: 'prorated_immediately',
+  effective_at: 'next_billing_date',
+});
+```
+
+**Plan changes are rejected while the subscription is `past_due`.** Settle the renewal debt first.
 
 ### Preview Plan Change
 
@@ -319,11 +350,16 @@ For full customer management (creating, updating, listing), see the `customer-ma
 | Event | When | Action |
 |-------|------|--------|
 | `subscription.active` | Subscription becomes active, including a trial start or recovery | Grant access |
+| `subscription.updated` | Any subscription field changes | Sync your stored copy (status, dates, metadata) |
 | `subscription.renewed` | Successful renewal | Log renewal, send receipt |
+| `subscription.past_due` | Renewal failed and the grace period opened (payload has `past_due_ends_at`) | Keep access, prompt for payment before the deadline |
 | `subscription.on_hold` | Renewal/plan-change payment failed | Notify customer, offer recovery |
+| `subscription.paused` | Subscription paused | Revoke access while paused |
+| `subscription.unpaused` | Paused subscription resumed | Restore access |
 | `subscription.plan_changed` | Plan upgraded/downgraded or add-ons changed | Update entitlements |
+| `subscription.update_payment_method` | Payment method updated | Update stored payment details |
 | `subscription.cancelled` | Customer cancels | Schedule access revocation per `cancel_at_next_billing_date` |
-| `subscription.failed` | Initial mandate/payment failed | Notify customer, offer retry or new subscription |
+| `subscription.failed` | Initial creation failed (mandate creation) | Notify customer, offer a new subscription |
 | `subscription.expired` | Subscription term ended | Revoke access |
 
 Webhook signature verification, raw-body handling, durable processing, and idempotency are covered in the `webhook-integration` skill.
@@ -356,6 +392,13 @@ export async function POST(req: NextRequest) {
       break;
     case 'subscription.on_hold':
       await notifyPaymentFailed(event.data.customer.customer_id);
+      break;
+    case 'subscription.paused':
+      // Scope to this subscription: the customer may hold other active ones.
+      await suspendSubscriptionAccess(event.data.subscription_id);
+      break;
+    case 'subscription.unpaused':
+      await restoreSubscriptionAccess(event.data.subscription_id);
       break;
     case 'subscription.cancelled':
       if (event.data.cancel_at_next_billing_date) {
@@ -459,9 +502,9 @@ await client.subscriptions.changePlan('sub_xxxxx', {
 
 This will fail. Always specify a proration mode.
 
-### 5. Confusing `on_hold` with Pause
+### 5. Confusing `on_hold` with `paused`
 
-`on_hold` means payment failed, not that the customer paused. There is no general pause/resume operation. `on_hold` is recoverable only by updating the payment method or waiting for retry.
+`on_hold` is involuntary: a payment failed, and it is recovered by updating the payment method or a successful retry. `paused` is deliberate: you or the customer froze the subscription with `subscriptions.update(id, { status: 'paused' })`, and it is resumed with `{ status: 'active' }`. Handle `subscription.paused`/`subscription.unpaused` separately from `subscription.on_hold`.
 
 ### 6. Not Handling `cancel_at_next_billing_date`
 
@@ -481,6 +524,7 @@ if (data.cancel_at_next_billing_date) {
 
 ## Resources
 
+- [Subscriptions (states, pause, grace period)](https://docs.dodopayments.com/features/subscription)
 - [Subscription Integration Guide](https://docs.dodopayments.com/developer-resources/subscription-integration-guide)
 - [Upgrade & Downgrade Guide](https://docs.dodopayments.com/developer-resources/subscription-upgrade-downgrade)
 - [On-Demand Subscriptions](https://docs.dodopayments.com/developer-resources/ondemand-subscriptions)

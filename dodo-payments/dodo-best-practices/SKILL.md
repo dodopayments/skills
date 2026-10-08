@@ -125,8 +125,13 @@ composer require "dodopayments/client:6.19.0"
 ```php
 use Dodopayments\Client;
 
+$apiKey = getenv('DODO_PAYMENTS_API_KEY');
+if ($apiKey === false || $apiKey === '') {
+    throw new RuntimeException('DODO_PAYMENTS_API_KEY is not set');
+}
+
 $client = new Client(
-    bearerToken: getenv('DODO_PAYMENTS_API_KEY') ?: 'My Bearer Token',
+    bearerToken: $apiKey,
     environment: 'test_mode',
 );
 ```
@@ -155,8 +160,12 @@ dodo_payments = Dodopayments::Client.new(
 ```
 
 ```java
-DodoPaymentsClient client = DodoPaymentsOkHttpClient.fromEnv();
-// Reads DODO_PAYMENTS_API_KEY, DODO_PAYMENTS_WEBHOOK_KEY, DODO_PAYMENTS_BASE_URL
+// fromEnv() reads DODO_PAYMENTS_API_KEY, DODO_PAYMENTS_WEBHOOK_KEY, DODO_PAYMENTS_BASE_URL.
+// Without testMode() (or a test DODO_PAYMENTS_BASE_URL) the client targets live mode.
+DodoPaymentsClient client = DodoPaymentsOkHttpClient.builder()
+    .fromEnv()
+    .testMode()
+    .build();
 ```
 
 ### Kotlin
@@ -170,7 +179,11 @@ DodoPaymentsClient client = DodoPaymentsOkHttpClient.fromEnv();
 ```
 
 ```kotlin
-val client: DodoPaymentsClient = DodoPaymentsOkHttpClient.fromEnv()
+// Without testMode() (or a test DODO_PAYMENTS_BASE_URL) the client targets live mode.
+val client: DodoPaymentsClient = DodoPaymentsOkHttpClient.builder()
+    .fromEnv()
+    .testMode()
+    .build()
 ```
 
 ---

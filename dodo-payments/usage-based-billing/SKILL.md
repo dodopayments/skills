@@ -357,15 +357,16 @@ await updateStorageUsage(
 ### Retrieve Usage History
 
 ```typescript
-const usage = await client.subscriptions.retrieveUsageHistory(
-  'sub_abc123',
-  { page_size: 100 }
-);
-
-console.log(usage.items); // Array of billing-period usage records
+// Auto-paginates across ALL billing periods; narrow with start_date/end_date/meter_id.
+for await (const period of client.subscriptions.retrieveUsageHistory('sub_abc123', {
+  start_date: '2025-01-01T00:00:00Z',
+  page_size: 20,
+})) {
+  console.log(period); // one record per billing period, with per-meter usage
+}
 ```
 
-This returns aggregated usage per meter for the subscription's current billing period.
+This is paginated usage history organized by billing period, across the subscription's lifetime - not just the current period. Filter with `start_date`, `end_date`, and `meter_id`, and iterate pages (or `for await`) rather than reading only the first page.
 
 ---
 
@@ -380,7 +381,7 @@ To link a meter to credits:
 3. On the meter, enable **Bill usage in Credits**.
 4. Set `credit_entitlement_id` and `meter_units_per_credit` (e.g., 1,000 tokens = 1 credit).
 
-Usage under the free threshold is excluded. Approximately every minute, a background worker aggregates new usage, converts it using the meter-to-credit ratio, and consumes the oldest non-expired credit grants (FIFO). When credits run out, configured overage behavior applies.
+The free threshold does **not** apply to credit-billed meters: every unit counts toward credit deduction (it only applies when the meter bills in money). Approximately every minute, a background worker aggregates new usage, converts it using the meter-to-credit ratio, and deducts from non-expired grants, earliest-expiring grants consumed first. When credits run out, configured overage behavior applies.
 
 ---
 

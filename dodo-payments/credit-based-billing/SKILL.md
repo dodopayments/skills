@@ -203,7 +203,7 @@ Attach the credit entitlement to the same usage-based product as the meter. The 
 | Field | Purpose |
 |---|---|
 | `meter_id` | Meter to aggregate usage. |
-| `free_threshold` | Optional usage excluded before rating. |
+| `free_threshold` | Free usage excluded before rating - applies **only** when the meter bills in money. It is ignored for credit-billed meters: every unit is deducted from the credit balance. |
 | `credit_entitlement_id` | Credit pool consumed by this meter. |
 | `meter_units_per_credit` | Usage units required to deduct one credit; required when `credit_entitlement_id` is set. |
 | `price_per_unit` | Direct per-unit monetary price when using pure usage pricing; decimal string. |
@@ -297,7 +297,7 @@ If the same `idempotency_key` already exists, the API can return `409`. Treat th
 
 ## Deduct credits manually
 
-Use the same method with `entry_type: 'debit'`. Debits consume the oldest grants first (FIFO) and can return `400` when the balance is insufficient.
+Use the same method with `entry_type: 'debit'`. Debits consume the earliest-expiring grants first and can return `400` when the balance is insufficient.
 
 ```typescript
 async function deductJobCredits(
@@ -356,10 +356,9 @@ Persist the Dodo ledger entry ID with internal order, support-case, or job IDs. 
 2. Add the meter to the same product.
 3. Enable **Bill usage in Credits** for that meter.
 4. Set `credit_entitlement_id` and `meter_units_per_credit`.
-5. Optionally set `free_threshold`; usage under it is excluded.
-6. Ingest events whose case-sensitive `event_name` matches the meter.
+5. Ingest events whose case-sensitive `event_name` matches the meter.
 
-A background worker processes new usage approximately every minute, aggregates it according to the meter, converts meter units using `meter_units_per_credit`, and consumes the oldest non-expired grants first (FIFO). Multiple meters can consume one shared credit pool at different conversion rates.
+A background worker processes new usage approximately every minute, aggregates it according to the meter, converts meter units using `meter_units_per_credit`, and deducts from non-expired grants with the earliest-expiring grants consumed first. There is no free threshold on a credit-billed meter. Multiple meters can consume one shared credit pool at different conversion rates.
 
 This delay is material: an accepted usage event does not imply that a balance read immediately afterward includes its deduction.
 
@@ -467,7 +466,7 @@ The lifecycle is:
 1. The model returns actual prompt and completion token counts.
 2. The app ingests one uniquely identified `ai.tokens` event.
 3. The meter aggregates the `tokens` metadata value.
-4. The worker converts units into credits and deducts FIFO from non-expired grants.
+4. The worker converts units into credits and deducts from non-expired grants, earliest-expiring first.
 5. Dodo emits `credit.deducted`; when configured threshold conditions are met, it emits `credit.balance_low`.
 6. The app notifies the customer and offers checkout for the attached top-up product.
 
@@ -588,7 +587,7 @@ Return an application-level payment/credit-required response with a top-up or up
 16. **Sending duplicate IDs within one batch.** Duplicate `event_id` values in the same ingestion request reject the entire request. Previously ingested IDs are ignored on retry.
 17. **Inventing a deduplication window.** Current docs require unique event IDs but do not publish a retention duration.
 18. **Getting conversion backward.** `meter_units_per_credit` is usage units required for one credit, and is required when `credit_entitlement_id` is set.
-19. **Ignoring the free threshold.** Usage under `free_threshold` is excluded before credit deduction.
+19. **Expecting a free threshold on credit-billed meters.** `free_threshold` applies only to meters billed in money. When **Bill usage in Credits** is on, every unit deducts credits; model included usage as granted credits instead.
 20. **Supplying one rollover timeframe field.** `rollover_timeframe_count` and `rollover_timeframe_interval` must be supplied together.
 21. **Using the wrong rollover enum case.** Confirmed values are `Day`, `Week`, `Month`, and `Year`.
 22. **Assuming expiry happens before rollover.** Rollover is applied first; only the remainder expires.

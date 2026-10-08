@@ -86,12 +86,13 @@ switch (result.status) {
     showFailure();
     break;
   case 'cancelled':
-    // User cancelled. Dismiss checkout.
-    dismiss();
+    // Sheet closed before the return URL arrived: the outcome is UNKNOWN and the
+    // payment may have succeeded. Do not show a failure - reconcile instead.
+    await reconcileAbandonedSession();
     break;
   case 'pending':
-    // Payment is pending (e.g., awaiting 3D Secure). Show waiting state.
-    showPending();
+    // Settles later (status=processing / requires_*), or status was missing.
+    await reconcileAbandonedSession();
     break;
   case 'expired':
     // Checkout session expired. Prompt user to start a new checkout.
@@ -102,16 +103,24 @@ switch (result.status) {
 
 ### Abandoned session recovery
 
-If the app crashes or is backgrounded during checkout, recover the session:
+The SDK keeps a record of the session until checkout ends with `succeeded`, `failed`, or `expired`. The record survives an app kill and **stays after a `cancelled` or `pending` result**. Check it on the next launch and after every `cancelled`/`pending`:
 
 ```typescript
 import { DodoCheckout } from '@dodopayments/react-native-checkout';
 
-const abandoned = await DodoCheckout.getAbandonedSession();
-if (abandoned) {
-  // Reconcile abandoned.sessionId with your backend
-  // Decide whether to resume or start fresh
-  await DodoCheckout.clearAbandonedSession();
+async function reconcileAbandonedSession() {
+  const abandoned = await DodoCheckout.getAbandonedSession();
+  if (!abandoned) return;
+
+  // Your backend calls GET /checkouts/{abandoned.sessionId} and returns payment_status.
+  const outcome = await fetchCheckoutOutcome(abandoned.sessionId);
+  if (outcome === 'succeeded' || outcome === 'failed' || outcome === 'expired') {
+    showOutcome(outcome);
+    // Clear only once the outcome is final; until then treat it as pending, not failed.
+    await DodoCheckout.clearAbandonedSession();
+  } else {
+    showPending();
+  }
 }
 ```
 
@@ -176,10 +185,10 @@ switch (result.status) {
     showFailure();
     break;
   case CheckoutStatus.cancelled:
-    dismiss();
-    break;
   case CheckoutStatus.pending:
-    showPending();
+    // Outcome unknown (the payment may have succeeded): reconcile the
+    // abandoned session with your backend instead of showing a failure.
+    await reconcileAbandonedSession();
     break;
   case CheckoutStatus.expired:
     showExpired();
@@ -218,111 +227,136 @@ On iOS, register the same scheme in `ios/Runner/Info.plist`:
 
 ## iOS (native)
 
-### Setup
+Use the official Swift package rather than parsing the return URL yourself. It presents `SFSafariViewController`, matches the return URL, and maps `status` (including `active` for subscriptions and `processing`/`requires_*` as pending) into a typed result. Requires iOS 16+ and Swift 6.2+.
 
-Use `SFSafariViewController` to open the checkout URL:
+### Installation
 
-```swift
-import SafariServices
-
-let checkoutURL = URL(string: "https://checkout.dodopayments.com/...")!
-let safariVC = SFSafariViewController(url: checkoutURL)
-present(safariVC, animated: true)
-```
-
-### Deep-link handling
-
-Register your custom URL scheme in `Info.plist`:
-
-```xml
-<key>CFBundleURLTypes</key>
-<array>
-  <dict>
-    <key>CFBundleURLSchemes</key>
-    <array>
-      <string>myapp</string>
-    </array>
-  </dict>
-</array>
-```
-
-Handle the return in your app delegate:
+Add `https://github.com/dodopayments/dodopayments-mobile-sdk-ios` (1.1.0 or later) in **File → Add Package Dependencies**, or in `Package.swift`:
 
 ```swift
-func application(
-  _ app: UIApplication,
-  open url: URL,
-  options: [UIApplication.OpenURLOptionsKey: Any] = [:]
-) -> Bool {
-  if url.scheme == "myapp" && url.host == "checkout" {
-    // Parse the result from the URL query parameters
-    let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
-    let status = components?.queryItems?.first(where: { $0.name == "status" })?.value
-    
-    switch status {
-    case "succeeded":
-      let paymentId = components?.queryItems?.first(where: { $0.name == "payment_id" })?.value
-      verifyPaymentOnBackend(paymentId: paymentId)
-    case "cancelled":
-      dismiss()
-    case "expired":
-      showExpired()
+.package(url: "https://github.com/dodopayments/dodopayments-mobile-sdk-ios", from: "1.1.0")
+```
+
+The library product is `DodoCheckout`. Register your scheme (`myapp`) under `CFBundleURLTypes` in `Info.plist`, and use the same URL as the session's `return_url`.
+
+### Starting checkout
+
+```swift
+import DodoCheckout
+
+let result = try await DodoCheckout.start(
+    checkoutUrl: checkoutUrl,   // URL from your backend's checkout session
+    returnUrl: URL(string: "myapp://checkout/return")!,
+    onEvent: { event in print(event.name) }  // logging only
+)
+
+switch result.status {
+case .succeeded: showSuccess(result.paymentId)          // UI hint only; verify on the backend
+case .failed:    showFailure()
+case .cancelled: await reconcileAbandonedSession()      // outcome unknown, not a failure
+case .pending:   await reconcileAbandonedSession()
+case .expired:   showExpired()
+}
+```
+
+### Forwarding the return URL
+
+`SFSafariViewController` cannot catch its own return URL, so forward every incoming URL to the SDK:
+
+```swift
+// SwiftUI
+.onOpenURL { url in
+    DodoCheckout.handleOpenURL(url)
+}
+```
+
+`handleOpenURL` returns `true` only for the in-progress checkout's return URL; handle other URLs yourself.
+
+### Abandoned sessions
+
+```swift
+func reconcileAbandonedSession() async {
+    guard let abandoned = DodoCheckout.getAbandonedSession() else { return }
+
+    // Your backend calls GET /checkouts/{sessionId} and returns payment_status.
+    let outcome = await fetchCheckoutOutcome(abandoned.sessionId)
+    switch outcome {
+    case "succeeded", "failed", "expired":
+        showOutcome(outcome)
+        // Clear only once the outcome is final.
+        DodoCheckout.clearAbandonedSession()
     default:
-      break
+        showPending() // still pending - keep the record and check again later
     }
-    return true
-  }
-  return false
 }
 ```
 
 ## Android (native)
 
-### Setup
+Use the official Android checkout SDK (`minSdk` 23, Kotlin, Java 17). It opens Chrome Custom Tabs, declares the redirect intent filter itself, and returns a typed result.
 
-Use Chrome Custom Tabs to open the checkout URL:
-
-```kotlin
-import androidx.browser.customtabs.CustomTabsIntent
-import android.net.Uri
-
-val checkoutUri = Uri.parse("https://checkout.dodopayments.com/...")
-val customTabsIntent = CustomTabsIntent.Builder().build()
-customTabsIntent.launchUrl(context, checkoutUri)
-```
-
-### Deep-link handling
-
-Register your custom URL scheme in `AndroidManifest.xml`:
-
-```xml
-<activity android:name=".CheckoutReturnActivity">
-  <intent-filter>
-    <action android:name="android.intent.action.VIEW" />
-    <category android:name="android.intent.category.DEFAULT" />
-    <category android:name="android.intent.category.BROWSABLE" />
-    <data android:scheme="myapp" android:host="checkout" android:path="/return" />
-  </intent-filter>
-</activity>
-```
-
-Handle the return in your activity:
+### Installation
 
 ```kotlin
-override fun onCreate(savedInstanceState: Bundle?) {
-  super.onCreate(savedInstanceState)
-  
-  val uri = intent.data
-  if (uri?.scheme == "myapp" && uri.host == "checkout") {
-    val status = uri.getQueryParameter("status")
-    val paymentId = uri.getQueryParameter("payment_id")
-    
-    when (status) {
-      "succeeded" -> verifyPaymentOnBackend(paymentId)
-      "cancelled" -> dismiss()
-      "expired" -> showExpired()
+// app/build.gradle.kts
+dependencies {
+    implementation("com.dodopayments.api:checkout-android:1.1.0")
+}
+
+android {
+    defaultConfig {
+        // The SDK's manifest uses this placeholder; do not add an intent filter yourself.
+        manifestPlaceholders["dodoCallbackScheme"] = "myapp"
     }
-  }
+}
+```
+
+### Starting checkout
+
+```kotlin
+import com.dodopayments.checkout.CheckoutParams
+import com.dodopayments.checkout.CheckoutStatus
+import com.dodopayments.checkout.DodoCheckout
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+
+// The activity-result launcher survives process death.
+private val checkoutLauncher =
+    registerForActivityResult(DodoCheckout.contract()) { result ->
+        when (result.status) {
+            CheckoutStatus.SUCCEEDED -> showSuccess(result.paymentId) // UI hint only; verify on the backend
+            CheckoutStatus.FAILED -> showFailure()
+            // Outcome unknown, not a failure. reconcileAbandonedSession() suspends
+            // (it calls your backend), so launch it from the lifecycle scope.
+            CheckoutStatus.CANCELLED, CheckoutStatus.PENDING ->
+                lifecycleScope.launch { reconcileAbandonedSession() }
+            CheckoutStatus.EXPIRED -> showExpired()
+        }
+    }
+
+checkoutLauncher.launch(
+    CheckoutParams(
+        checkoutUrl = checkoutUrl, // from your backend's checkout session
+        returnUrl = "myapp://checkout/return"
+    )
+)
+```
+
+### Abandoned sessions
+
+```kotlin
+suspend fun reconcileAbandonedSession() {
+    val abandoned = DodoCheckout.getAbandonedSession(context) ?: return
+
+    // Your backend calls GET /checkouts/{sessionId} and returns payment_status.
+    when (val outcome = fetchCheckoutOutcome(abandoned.sessionId)) {
+        "succeeded", "failed", "expired" -> {
+            showOutcome(outcome)
+            // Clear only once the outcome is final.
+            DodoCheckout.clearAbandonedSession(context)
+        }
+        else -> showPending() // still pending - keep the record and check again later
+    }
 }
 ```
 
@@ -372,23 +406,40 @@ Never grant access based on the mobile SDK result alone. Always verify via webho
 Listen for `payment.succeeded` webhooks. Webhook signature verification is covered in the `webhook-integration` skill.
 
 ```typescript
+// Mount with express.raw({ type: 'application/json' }) so req.body is the raw Buffer.
 app.post('/webhook', async (req, res) => {
-  const event = client.webhooks.unwrap(req.body.toString(), {
-    headers: {
-      'webhook-id': req.headers['webhook-id'] as string,
-      'webhook-signature': req.headers['webhook-signature'] as string,
-      'webhook-timestamp': req.headers['webhook-timestamp'] as string,
-    },
-  });
-  
-  if (event.type === 'payment.succeeded') {
-    const paymentId = event.data.payment_id;
-    const customerId = event.data.customer.customer_id;
-    
-    // Grant access to the customer
-    await grantAccess(customerId);
+  let event;
+  try {
+    event = client.webhooks.unwrap(req.body.toString(), {
+      headers: {
+        'webhook-id': req.headers['webhook-id'] as string,
+        'webhook-signature': req.headers['webhook-signature'] as string,
+        'webhook-timestamp': req.headers['webhook-timestamp'] as string,
+      },
+    });
+  } catch {
+    return res.status(401).json({ error: 'Invalid signature' });
   }
-  
+
+  try {
+    // Dodo retries and may redeliver: claim webhook-id with a UNIQUE insert
+    // and grant in the same transaction so a duplicate is a no-op.
+    await db.$transaction(async (tx) => {
+      const claim = await tx.webhookLog.createMany({
+        data: [{ webhookId: req.headers['webhook-id'] as string, eventType: event.type }],
+        skipDuplicates: true,
+      });
+      if (claim.count === 0) return; // already processed
+
+      if (event.type === 'payment.succeeded') {
+        await grantAccess(event.data.customer.customer_id, tx);
+      }
+    });
+  } catch (error) {
+    // Non-2xx makes Dodo retry; the transaction rolled back the claim.
+    return res.status(500).json({ error: 'Processing failed' });
+  }
+
   res.json({ received: true });
 });
 ```
@@ -408,13 +459,14 @@ if (session.payment_status === 'succeeded' && session.payment_id) {
 
 ## Selling digital goods on iOS
 
-If you're selling digital goods (software, in-app features, subscriptions) on iOS, Apple requires you to use in-app purchase APIs for certain categories. Dodo Payments can handle the payment processing, but you must comply with App Store guidelines:
+Dodo Payments hosted checkout can sell digital goods (subscriptions, courses, downloads, SaaS plans) in an iOS app **only on App Store storefronts where Apple allows external purchases**:
 
-- Digital content (ebooks, music, software) must use in-app purchase.
-- Physical goods and services can use alternative payment methods.
-- Subscriptions for digital content must use in-app purchase.
+- **United States:** Guideline 3.1.1(a) allows buttons and links to other purchase methods without an entitlement (subject to the Epic v. Apple proceedings).
+- **European Union:** requires Apple's EU external purchase entitlement (the StoreKit External Purchases or Offers Entitlement from October 1, 2026) and DMA compliance.
+- **Japan:** allowed under the Mobile Software Competition Act, following Apple's Japan-specific entitlement requirements.
+- **South Korea is not supported** (Apple requires a native, non-web-view flow through an approved Korean PSP).
 
-Consult Apple's App Store Review Guidelines and consider whether your product category requires in-app purchase. If it does, integrate StoreKit 2 alongside Dodo Payments for compliance.
+On other storefronts, digital goods sold inside the iOS app must use Apple in-app purchase (StoreKit). Review Apple's region-specific entitlements before enabling Dodo checkout for a storefront; unsupported flows can get the app rejected.
 
 ## Common mistakes
 
@@ -459,8 +511,8 @@ If you don't register the custom URL scheme, the app won't receive the return ca
 
 - React Native: Use the Expo plugin or manually register in `Info.plist` and `AndroidManifest.xml`.
 - Flutter: Register in both `Info.plist` and `AndroidManifest.xml`.
-- iOS: Add `CFBundleURLTypes` to `Info.plist`.
-- Android: Add an intent filter with the scheme in `AndroidManifest.xml`.
+- iOS: Add `CFBundleURLTypes` to `Info.plist` and forward URLs to `DodoCheckout.handleOpenURL`.
+- Android: Set `manifestPlaceholders["dodoCallbackScheme"]`; the SDK supplies the intent filter.
 
 ### Not handling all result statuses
 
@@ -481,10 +533,9 @@ switch (result.status) {
     showFailure();
     break;
   case 'cancelled':
-    dismiss();
-    break;
   case 'pending':
-    showPending();
+    // Unknown outcome - reconcile, never show a failure
+    reconcileAbandonedSession();
     break;
   case 'expired':
     showExpired();
@@ -500,12 +551,9 @@ If the app crashes or is backgrounded during checkout, the session is abandoned.
 // WRONG
 // No recovery logic
 
-// CORRECT
-const abandoned = await DodoCheckout.getAbandonedSession();
-if (abandoned) {
-  // Reconcile and clear
-  await DodoCheckout.clearAbandonedSession();
-}
+// CORRECT: reconcile on launch and after every cancelled/pending result,
+// and clear the record only once the backend reports a final outcome.
+await reconcileAbandonedSession(); // defined in the React Native section above
 ```
 
 ## Package names
@@ -516,6 +564,8 @@ Use `@dodopayments/react-native-checkout` for React Native and `dodopayments_che
 
 - [Mobile Integration](https://docs.dodopayments.com/developer-resources/mobile-integration)
 - [React Native SDK](https://docs.dodopayments.com/developer-resources/sdks/react-native)
+- [iOS SDK](https://docs.dodopayments.com/developer-resources/sdks/ios)
+- [Android SDK](https://docs.dodopayments.com/developer-resources/sdks/android)
 - [Flutter SDK](https://pub.dev/packages/dodopayments_checkout)
 - [Selling Digital Goods on iOS](https://docs.dodopayments.com/features/appstore-digital-goods)
 - [Webhook Integration](https://docs.dodopayments.com/developer-resources/webhooks/intents) (for payment verification)
