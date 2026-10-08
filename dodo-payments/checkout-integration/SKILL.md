@@ -38,7 +38,7 @@ Dodo Payments offers three ways to collect payment:
 
 **Checkout Session:** A single-use session that generates a hosted checkout URL. Expires after 24 hours (or 15 minutes if `confirm=true`).
 
-**Return URL:** Where the customer lands after payment. Query parameters include `status=success` and `session_id`.
+**Return URL:** Where the customer lands after payment. Dodo appends `payment_id` (one-time) or `subscription_id` (subscription), `status`, and when available `license_key` and `email`. It is a UI hint only, never proof of payment.
 
 **Entitlement on webhook:** The browser redirect is not the source of truth. Always verify payment via webhook before granting access. See `webhook-integration` skill for verification.
 
@@ -637,31 +637,27 @@ async function createCheckoutUrl(planId: PlanId, quantity = 1): Promise<string> 
   return data.checkoutUrl;
 }
 
-export async function openOverlayCheckout(planId: PlanId): Promise<void> {
-  const checkoutUrl = await createCheckoutUrl(planId);
-
+// Call ONCE when the app loads (e.g. in your root component or entry point),
+// not before every checkout. Pick the display type your page uses.
+export function initCheckout(displayType: 'overlay' | 'inline'): void {
   DodoPayments.Initialize({
     mode: 'test', // or 'live'
-    displayType: 'overlay',
+    displayType,
     onEvent: (event) => {
       console.log('Checkout event:', event);
     }
   });
+}
 
+// Requires initCheckout('overlay') to have run at app load.
+export async function openOverlayCheckout(planId: PlanId): Promise<void> {
+  const checkoutUrl = await createCheckoutUrl(planId);
   DodoPayments.Checkout.open({ checkoutUrl });
 }
 
+// Requires initCheckout('inline') to have run at app load.
 export async function openInlineCheckout(planId: PlanId): Promise<void> {
   const checkoutUrl = await createCheckoutUrl(planId);
-
-  DodoPayments.Initialize({
-    mode: 'test', // or 'live'
-    displayType: 'inline',
-    onEvent: (event) => {
-      console.log('Checkout event:', event);
-    }
-  });
-
   DodoPayments.Checkout.open({
     checkoutUrl,
     elementId: 'dodo-inline-checkout'
@@ -684,6 +680,8 @@ No-code shareable links. No server-side API call needed.
 ```text
 https://checkout.dodopayments.com/buy/{productid}
 ```
+
+In test mode the host is `test.checkout.dodopayments.com` (for example `https://test.checkout.dodopayments.com/buy/{productid}`); a test-mode product does not exist on the live host.
 
 Example:
 ```text
@@ -789,12 +787,20 @@ const session = await client.checkoutSessions.create({
 After payment, the customer is redirected to your `return_url` with query parameters:
 
 ```text
-https://yoursite.com/success?status=success&session_id=cks_123
+# One-time payment
+https://yoursite.com/success?payment_id=pay_xxx&status=succeeded&email=customer%40example.com
+
+# Subscription (with license keys)
+https://yoursite.com/success?subscription_id=sub_xxx&status=active&license_key=LK-001,LK-002&email=customer%40example.com
 ```
 
 Query parameters:
-- `status`: `success` or `failed`
-- `session_id`: Checkout session ID
+- `payment_id` (one-time payments) or `subscription_id` (subscriptions)
+- `status`: `succeeded` (one-time) or `active` (subscription) on success; `failed` if declined; `processing` (or a `requires_*` value) if it settles later; `expired` if the session expired
+- `license_key`: present when the product issues license keys (comma-separated if several)
+- `email`: present when the customer has an email on record
+
+There is no `session_id` parameter. Treat `processing`/missing status as "unknown" and wait for the webhook.
 
 ### Verify Payment Server-Side
 
@@ -818,8 +824,8 @@ Do not use `client.payments.create()` or `client.subscriptions.create()` for new
 **3. Forgetting the `environment` flag**
 The default is `live_mode`. Always set `environment: 'test_mode'` during development to avoid charging real cards.
 
-**4. Assuming only one discount-code form is valid**
-Both `discount_code` (a string) and `discount_codes` (an array) are valid Checkout Session parameters.
+**4. Using the deprecated `discount_code`**
+Use `discount_codes` (an array). The singular `discount_code` string is deprecated (still accepted for backward compatibility) and cannot be combined with `discount_codes` in the same request.
 
 **5. Amounts in wrong unit**
 All amounts are in the smallest currency unit (cents for USD). $10 is `1000`, not `10`.
