@@ -234,7 +234,7 @@ interface LicenseInfo {
   key: string;
   instanceId: string;
   activatedAt: string;
-  lastValidatedAt: string; // last time the server confirmed the license
+  lastValidatedAt?: string; // last time the server confirmed the license (absent on records saved before it was added)
 }
 
 export async function activateLicense(licenseKey: string): Promise<boolean> {
@@ -296,7 +296,9 @@ export async function checkLicense(): Promise<boolean> {
     // LAST SUCCESSFUL validation, not from activation - otherwise a key revoked
     // yesterday keeps working offline for 30 days after activation, and an old
     // activation gets no grace at all.
-    const lastValidated = new Date(license.lastValidatedAt);
+    // Records saved before lastValidatedAt existed fall back to activatedAt
+    // until their first successful validation.
+    const lastValidated = new Date(license.lastValidatedAt ?? license.activatedAt);
     const daysSinceValidation = (Date.now() - lastValidated.getTime()) / (1000 * 60 * 60 * 24);
 
     // Allow 30-day offline grace period
