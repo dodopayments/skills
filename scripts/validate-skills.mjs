@@ -3,7 +3,7 @@
 // Usage: node validate-skills.mjs /path/to/skills-pr
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 
 const root = process.argv[2];
 if (!root) {
@@ -112,6 +112,24 @@ function checkBody(rel, body, offset) {
 
 }
 
+/**
+ * Skills install independently, so every relative link must resolve inside the
+ * skill's own directory. Covers inline `](x)` and reference-style `[id]: x` links.
+ */
+function checkLinksInside(rel, body, fileDir, skillRoot) {
+    const targets = [
+        ...body.matchAll(/\]\(\s*<?([^)\s>]+)/g),
+        ...body.matchAll(/^\s*\[[^\]]+\]:\s*<?([^\s>]+)/gm),
+    ].map((m) => m[1]);
+    for (const t of targets) {
+        if (/^([a-z][a-z0-9+.-]*:|#|\/)/i.test(t)) continue; // URL, anchor, or absolute
+        const abs = resolve(fileDir, t.split('#')[0]);
+        if (abs !== skillRoot && !abs.startsWith(skillRoot + sep)) {
+            err(rel, `link outside the skill directory (${t}) - name the other skill in prose instead`);
+        }
+    }
+}
+
 const seenNames = new Map();
 
 /**
@@ -163,6 +181,8 @@ for (const dir of dirs) {
     }
 
     checkBody(rel, body, fm[0].split('\n').length - 1);
+    const skillRoot = resolve(skillsDir, dir);
+    checkLinksInside(rel, body, skillRoot, skillRoot);
 
     // --- length: the Agent Skills spec caps SKILL.md at 500 lines ---
     // A trailing newline ends the last line; it does not start another one.
@@ -186,6 +206,7 @@ for (const dir of dirs) {
         const refBody = readFileSync(join(refDir, f), 'utf8');
         if (refBody.startsWith('---\n')) err(refRel, 'reference files must not carry frontmatter (they would register as skills)');
         checkBody(refRel, refBody, 0);
+        checkLinksInside(refRel, refBody, refDir, skillRoot);
     }
 
     if (body.split('\n').length < 40) warn(rel, 'suspiciously short skill');

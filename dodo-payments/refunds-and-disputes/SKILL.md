@@ -350,4 +350,4 @@ async function reconcileRefund(refund) {
 - [Refunds API](https://docs.dodopayments.com/api-reference/refunds/post-refunds)
 - [Refunds feature guide](https://docs.dodopayments.com/features/transactions/refunds)
 - [Dispute webhooks](https://docs.dodopayments.com/developer-resources/webhooks/intents/dispute)
-- [Webhook integration skill](../webhook-integration/) for signature verification
+- The `webhook-integration` skill for signature verification
