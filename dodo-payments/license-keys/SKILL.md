@@ -586,10 +586,10 @@ type Grant = DodoPayments.Entitlements.EntitlementGrant;
 
 // Webhooks can arrive out of order and be retried concurrently. Apply a grant
 // only when it is newer than the stored copy (by the grant's own updated_at),
-// using a single conditional UPDATE so a stale "delivered" can never overwrite
-// a newer "revoked". If no row exists yet - including a revocation that arrives
-// before the delivery - insert one; the unique externalId makes concurrent
-// inserts safe, and a losing insert is skipped rather than overwriting.
+// using a conditional UPDATE so a stale "delivered" can never overwrite a newer
+// "revoked". If no row exists yet - including a revocation that arrives before
+// the delivery - insert one; the unique externalId keeps concurrent inserts
+// safe, and the loser retries the conditional update so the newest grant wins.
 async function mirrorGrant(grant: Grant, status: 'active' | 'revoked') {
   const grantUpdatedAt = new Date(grant.updated_at);
   const fields = {
@@ -603,16 +603,24 @@ async function mirrorGrant(grant: Grant, status: 'active' | 'revoked') {
     }),
   };
 
-  const { count } = await prisma.license.updateMany({
-    where: { externalId: grant.id, grantUpdatedAt: { lt: grantUpdatedAt } },
-    data: fields,
-  });
-  if (count === 0) {
-    // Either no row yet, or the stored copy is already as new or newer.
-    await prisma.license.createMany({
-      data: [{ externalId: grant.id, ...fields }],
-      skipDuplicates: true,
+  const applyIfNewer = () =>
+    prisma.license.updateMany({
+      where: { externalId: grant.id, grantUpdatedAt: { lt: grantUpdatedAt } },
+      data: fields,
     });
+
+  const updated = await applyIfNewer();
+  if (updated.count > 0) return;
+
+  // Either no row yet, or the stored copy is already as new or newer.
+  const inserted = await prisma.license.createMany({
+    data: [{ externalId: grant.id, ...fields }],
+    skipDuplicates: true,
+  });
+  if (inserted.count === 0) {
+    // A concurrent webhook inserted the row first. It may hold an OLDER grant,
+    // so re-run the conditional update; it is a no-op if the row is newer.
+    await applyIfNewer();
   }
 }
 ```
