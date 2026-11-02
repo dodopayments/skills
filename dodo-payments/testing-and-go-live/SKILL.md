@@ -138,12 +138,12 @@ This immediately schedules the renewal. If you used the subscription-renewal-fai
 The CLI ships separately from the SDKs:
 
 ```bash
-npm i -g dodopayments-cli@3.7.0
-dodo login            # sign in with the browser
-dodo login --device   # over SSH or with no browser: enter a code on another device
-dodo whoami           # show the stored sign-in
-dodo logout all       # sign out
+npm i -g dodopayments-cli   # browser sign-in needs v3.7.0 or later
+dodo login                  # sign in with the browser
+dodo whoami                 # show the stored sign-in
 ```
+
+Over SSH or with no browser, run `dodo login --device` in place of `dodo login`, and enter the code on another device. To sign out when you finish, run `dodo logout all`.
 
 `dodo login` opens a Dodo Payments consent page: pick the business, mode and permissions. No step asks you to paste an API key. To review or revoke the CLI's access, open the dashboard at **Settings > Connected Apps**.
 
