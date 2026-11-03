@@ -40,6 +40,16 @@ Pricing is nested inside the product object. There is no separate top-level Pric
 
 **Digital delivery:** Entitlements grant customers access to files. Download URLs expire after roughly 15 minutes.
 
+## Choose a brand before checkout
+
+If a project's customer-facing identity matters, create a dedicated brand under **Settings > Business** and select it on the product (top-level `brand_id`) before the first live checkout. Using the primary brand is fine when its existing branding suits the use case.
+
+For example, a product named **Acme Studio** under a brand named **personal** can still show `DODOPAY_PERSONAL` on the customer's bank statement. Renaming the product does not change the brand's statement descriptor.
+
+**Existing subscriptions keep their brand:** Changing a product's `brand_id` affects new subscriptions only. Moving an individual existing subscription between brands is not currently supported. Renaming the original brand affects future renewals of every subscription still attached to it.
+
+[Archiving a secondary brand](https://docs.dodopayments.com/features/multi-brands#archiving-a-brand) is a separate operation: it permanently retires the brand and moves all its live subscriptions together. The primary brand cannot be archived.
+
 ## Creating a product
 
 All products require a name, a pricing model, and a tax category.
@@ -129,7 +139,7 @@ const product = await client.products.retrieve('pdt_pro_bundle');
 
 ## Updating a product
 
-`PATCH /products/{id}` (`client.products.update`) accepts the name, description, and metadata, and also `price`, `tax_category`, and `pricing_mode`. Every field is optional; omitted fields stay unchanged.
+`PATCH /products/{id}` (`client.products.update`) accepts the name, description, and metadata, and also `brand_id`, `price`, `tax_category`, and `pricing_mode`. Every field is optional; omitted fields stay unchanged.
 
 Two limits apply. The **pricing model is immutable**: you can edit the amount, but you cannot turn a one-time product into a subscription or usage-based one (or back) - create a new product instead. And a price edit only changes what **new** customers pay: existing subscriptions keep the price they were created with, so move them explicitly with Change Plan (`client.subscriptions.changePlan(...)`).
 
