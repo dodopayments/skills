@@ -246,6 +246,8 @@ Before switching to production, verify each item:
 ### Products and checkout
 
 - [ ] All products are created in live mode (not copied from test).
+- [ ] Each live product has the intended `brand_id` before the first customer subscription. Changing the product's brand later does not move existing subscriptions.
+- [ ] You've checked the brand name, logo, support email, and statement descriptor under **Settings > Business**, and verified checkout and test invoice branding.
 - [ ] Your checkout code uses live product IDs.
 - [ ] Return URLs point to your production domain.
 - [ ] Tax categories are correct for your products.
@@ -339,6 +341,7 @@ Test keys (prefixed `dodo_test_`) only work with `https://test.dodopayments.com`
 
 ## Resources
 
+- [Multi-Brand Setup](https://docs.dodopayments.com/features/multi-brands)
 - [Testing Process](https://docs.dodopayments.com/miscellaneous/testing-process)
 - [Test vs. Live Mode](https://docs.dodopayments.com/miscellaneous/test-mode-vs-live-mode)
 - [Webhook Integration](https://docs.dodopayments.com/developer-resources/webhooks)
