@@ -14,13 +14,15 @@ One server, `dodopayments`, at `https://mcp.dodopayments.com/mcp` (Streamable HT
 
 ## Tools
 
-| Tool | Does | Sign-in |
-|---|---|---|
-| `search_docs` | Searches guides and docs pages; returns short ranked results with links | Not needed |
-| `read_docs_page` | Returns one docs page as Markdown | Not needed |
-| `search` | Searches the SDK and API reference: method names, parameters, response fields, webhook payloads | Not needed |
-| `execute` | Runs a TypeScript script against the `dodopayments` SDK on the user's account | Needed; the first call starts OAuth |
-| `feedback` | Sends a note about docs or tool results that were wrong, missing or confusing | Not needed |
+| Tool | Does |
+|---|---|
+| `search_docs` | Searches guides and docs pages; returns short ranked results with links |
+| `read_docs_page` | Returns one docs page as Markdown |
+| `search` | Searches the SDK and API reference: method names, parameters, response fields, webhook payloads |
+| `execute` | Runs a TypeScript script against the `dodopayments` SDK on the user's account |
+| `feedback` | Sends a note about docs or tool results that were wrong, missing or confusing |
+
+Every tool needs sign-in. A client that cannot do OAuth can connect to `https://mcp.dodopayments.com/mcp?auth=optional` instead: the docs tools, `search` and `feedback` then work without an account, and `execute` returns 401.
 
 ## Workflow
 
@@ -48,7 +50,7 @@ One server, `dodopayments`, at `https://mcp.dodopayments.com/mcp` (Streamable HT
 
 ## Sign-in
 
-Docs tools work without an account. The first `execute` call returns 401, and the client opens a Dodo Payments consent page. The user signs in, picks the business, the mode and the permissions, and the client retries. The client stores the token. Review or revoke access in the dashboard under **Settings > Connected Apps**. To switch business or mode, sign out of the server in the client and sign in again.
+The server returns 401 until the client signs in, so the client opens a Dodo Payments consent page when the server is added (or when the user runs the sign-in command). The user signs in, picks the business, the mode and the permissions, and the client retries. The client stores the token. Review or revoke access in the dashboard under **Settings > Connected Apps**. To switch business or mode, sign out of the server in the client and sign in again.
 
 Client sign-in commands: `/mcp` in Claude Code, `codex mcp login dodopayments`, `opencode mcp auth dodopayments`.
 
@@ -70,7 +72,7 @@ A client that cannot speak Streamable HTTP or MCP OAuth can run `npx -y mcp-remo
 
 | Symptom | Cause and fix |
 |---|---|
-| 401 or "needs authentication" from `execute` | Not signed in, expired, or revoked. Run the client's sign-in command and retry. `mcp-remote` caches tokens in `~/.mcp-auth`; delete it to force a new sign-in |
+| 401, "needs authentication", or the server shows as not connected | Not signed in, expired, or revoked. Run the client's sign-in command and retry. `mcp-remote` caches tokens in `~/.mcp-auth`; delete it to force a new sign-in |
 | 403 on one call while others work | The granted permissions do not cover it. Sign out, sign in again and grant the missing permission |
 | Empty list or "not found" for an ID the user gave | Wrong mode. Test and live data are separate; check which mode the ID came from |
 | A script fails | Read the API error, which usually names the field. Check the method with `search`, fix the script |
