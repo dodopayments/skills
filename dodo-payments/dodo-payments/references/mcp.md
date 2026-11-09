@@ -20,9 +20,9 @@ One server, `dodopayments`, at `https://mcp.dodopayments.com/mcp` (Streamable HT
 | `read_docs_page` | Returns one docs page as Markdown |
 | `search` | Searches the SDK and API reference: method names, parameters, response fields, webhook payloads |
 | `execute` | Runs a TypeScript script against the `dodopayments` SDK on the user's account |
-| `feedback` | Sends a note about docs or tool results that were wrong, missing or confusing |
+| `feedback` | Sends a note about docs or tool results that were wrong, missing or confusing. The Dodo Payments team reads and triages each one |
 
-Every tool needs sign-in. A client that cannot do OAuth can connect to `https://mcp.dodopayments.com/mcp?auth=optional` instead: the docs tools, `search` and `feedback` then work without an account, and `execute` returns 401.
+Every tool needs sign-in. A client that cannot do OAuth can connect to `https://mcp.dodopayments.com/mcp?auth=optional` instead: the docs tools and `search` then work without an account, and `execute` and `feedback` return 401.
 
 ## Workflow
 
