@@ -106,15 +106,15 @@ Read only the file the task needs.
 
 ## Using the `dodopayments` MCP server
 
-When the `dodopayments` MCP server is connected (`https://mcp.dodopayments.com/mcp`), it has five tools:
+When the `dodopayments` MCP server is connected (`https://mcp.dodopayments.com/mcp`), it has five tools. The client signs in to Dodo Payments through OAuth when the server is added; no API key is needed.
 
-| Tool | Use it to | Sign-in |
-|---|---|---|
-| `search_docs` | Find guides and docs pages | Not needed |
-| `read_docs_page` | Read a full docs page as Markdown | Not needed |
-| `search` | Find SDK and API methods, parameters and response fields | Not needed |
-| `execute` | Run TypeScript against the `dodopayments` SDK on the user's account | Needed; the first call starts OAuth |
-| `feedback` | Report docs that were wrong, missing or confusing | Not needed |
+| Tool | Use it to |
+|---|---|
+| `search_docs` | Find guides and docs pages |
+| `read_docs_page` | Read a full docs page as Markdown |
+| `search` | Find SDK and API methods, parameters and response fields |
+| `execute` | Run TypeScript against the `dodopayments` SDK on the user's account |
+| `feedback` | Report docs that were wrong, missing or confusing |
 
 - Call `search_docs` before writing integration code. The docs win over memory.
 - Call `search` before `execute`, so the script uses real method names and fields.
