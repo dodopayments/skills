@@ -38,7 +38,13 @@ The hosted customer portal is the default billing UI: invoices, cancel or change
 ```typescript
 // app/api/portal/route.ts
 import { NextResponse } from 'next/server';
+import DodoPayments from 'dodopayments';
 import { getCurrentUser } from '@/lib/auth';
+
+const client = new DodoPayments({
+  bearerToken: process.env.DODO_PAYMENTS_API_KEY,
+  environment: process.env.DODO_PAYMENTS_ENVIRONMENT === 'live_mode' ? 'live_mode' : 'test_mode',
+});
 
 export async function POST() {
   const user = await getCurrentUser();
