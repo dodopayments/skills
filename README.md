@@ -1,94 +1,55 @@
-# Dodo Payments Skills
+# Dodo Payments Skill
 
-Official AI agent skills from Dodo Payments for integrating payments, subscriptions, billing, and more into your applications.
+The official AI agent skill from Dodo Payments. One skill, `dodo-payments`, helps agents integrate payments, subscriptions, webhooks, usage and credit billing, license keys, and more.
 
 ## Installation
 
-### Skills CLI (Any Agent)
-
-Install skills using the skills CLI:
+### Skills CLI (any agent)
 
 ```bash
 npx skills add dodopayments/skills
 ```
 
-Or install individual skills:
-
-```bash
-npx skills add dodopayments/skills/dodo-payments/dodo-best-practices
-npx skills add dodopayments/skills/dodo-payments/webhook-integration
-npx skills add dodopayments/skills/dodo-payments/subscription-integration
-```
-
 ### Claude Code
-
-Add the marketplace:
 
 ```text
 /plugin marketplace add dodopayments/skills
+/plugin install dodo-payments
 ```
 
-Install a plugin:
+### Dodo Payments agent plugin
 
-```text
-/plugin install dodo-best-practices
-/plugin install webhook-integration
-/plugin install subscription-integration
-```
+The [Dodo Payments agent plugin](https://github.com/dodopayments/dodo-agent-plugin) ships this skill together with the `dodopayments` MCP server (`https://mcp.dodopayments.com/mcp`).
 
-### OpenCode
-
-Skills are automatically available when configured in your OpenCode settings.
-
-## Available Skills
-
-### Getting started
+## The skill
 
 | Skill | Description |
 |-------|-------------|
-| [dodo-best-practices](./dodo-payments/dodo-best-practices/) | Orientation guide: SDKs, environments, auth, core concepts, and the canonical integration path |
-| [framework-adapters](./dodo-payments/framework-adapters/) | Official adapter packages for Next.js, Express, Hono, Astro, Remix, SvelteKit, Nuxt, Fastify, TanStack, Bun, and Convex |
-| [testing-and-go-live](./dodo-payments/testing-and-go-live/) | Test mode, test payment methods, webhook testing, and the production launch checklist |
+| [dodo-payments](./dodo-payments/dodo-payments/) | Index (`SKILL.md`) with the standard checkout-to-webhook path, client setup, safety rules, MCP usage, and a routing table to one reference file per topic |
 
-### Accepting payments
+[`SKILL.md`](./dodo-payments/dodo-payments/SKILL.md) is the only file an agent loads up front. It links each topic file in [`references/`](./dodo-payments/dodo-payments/references/), which the agent reads only when the task needs it:
 
-| Skill | Description |
-|-------|-------------|
-| [checkout-integration](./dodo-payments/checkout-integration/) | Creating checkout sessions, payment links, and overlay checkout |
-| [subscription-integration](./dodo-payments/subscription-integration/) | Subscription lifecycle, trials, plan changes, proration, and on-demand charging |
-| [mobile-checkout](./dodo-payments/mobile-checkout/) | In-app checkout for React Native, Flutter, iOS, and Android |
-| [webhook-integration](./dodo-payments/webhook-integration/) | Receiving and verifying webhooks with the Standard Webhooks specification |
-| [dodo-mcp-usage](./dodo-payments/dodo-mcp-usage/) | When to use the dodo-knowledge docs MCP vs the dodopayments-api MCP (Code Mode), auth setup, test-mode safety rules, and troubleshooting |
+| Reference | Covers |
+|---|---|
+| `checkout.md` | Checkout sessions, overlay and inline checkout, static payment links, return URL |
+| `mobile-checkout.md` | React Native, Flutter, iOS and Android checkout |
+| `subscriptions.md` | Trials, statuses, plan changes and proration, pause and cancel, recovery, on-demand charges |
+| `webhooks.md` | Endpoint setup, signature verification, idempotent processing, every webhook type |
+| `usage-billing.md` | Meters, usage events, per-unit pricing |
+| `credits.md` | Credit entitlements, balances, ledger, rollover, overage |
+| `license-keys.md` | Activation, validation, CLI and desktop apps, revocation |
+| `products.md` | Products, add-ons, collections, images, digital files |
+| `discounts.md` | Discount codes, eligibility, stacking, plan changes |
+| `localized-pricing.md` | Adaptive Currency, localized prices, purchasing power parity |
+| `customers.md` | Customers, customer portal, payment methods, wallets |
+| `refunds-disputes.md` | Refunds, disputes, access |
+| `framework-adapters.md` | `@dodopayments/*` adapters for Next.js, Express, Hono, Fastify, Astro, Remix, SvelteKit, Nuxt, TanStack, Bun, Convex |
+| `better-auth.md` | The `@dodopayments/better-auth` plugin |
+| `billing-sdk.md` | BillingSDK React components |
+| `testing-go-live.md` | Test cards, Dodo CLI, local webhooks, go-live checklist |
+| `mcp.md` | The `dodopayments` MCP server |
 
-### Billing models
-
-| Skill | Description |
-|-------|-------------|
-| [credit-based-billing](./dodo-payments/credit-based-billing/) | Credit entitlements, balances, ledger, rollover, overage, and meter-based deduction |
-| [usage-based-billing](./dodo-payments/usage-based-billing/) | Metered billing with meters, event ingestion, and per-unit pricing |
-| [license-keys](./dodo-payments/license-keys/) | License key activation, validation, and instance management |
-
-### Catalog and pricing
-
-| Skill | Description |
-|-------|-------------|
-| [product-catalog-management](./dodo-payments/product-catalog-management/) | Products, pricing, add-ons, collections, images, and digital product delivery |
-| [discounts-and-promotions](./dodo-payments/discounts-and-promotions/) | Discount codes, eligibility rules, stacking, and subscription-cycle limits |
-| [localized-pricing](./dodo-payments/localized-pricing/) | Localized pricing, adaptive currency, and purchasing power parity |
-
-### Customers and operations
-
-| Skill | Description |
-|-------|-------------|
-| [customer-management](./dodo-payments/customer-management/) | Customers, the self-service portal, payment methods, and wallets |
-| [refunds-and-disputes](./dodo-payments/refunds-and-disputes/) | Issuing refunds, handling disputes and chargebacks, reconciling access |
-
-### UI and integrations
-
-| Skill | Description |
-|-------|-------------|
-| [billing-sdk](./dodo-payments/billing-sdk/) | BillingSDK React components for pricing tables and billing UI |
-| [better-auth-integration](./dodo-payments/better-auth-integration/) | The `@dodopayments/better-auth` plugin for customer sync, checkout, and portal |
+The 18 separate skills of version 2 (`dodo-best-practices`, `checkout-integration`, `webhook-integration` and the rest) are merged into this one skill. Reinstall with the commands above.
 
 ## What are Skills?
 
@@ -96,7 +57,7 @@ Skills are reusable capabilities for AI agents. They provide procedural knowledg
 
 ## Contributing
 
-Skills are pasted verbatim into an agent's context and reproduced as-is, so a wrong field name propagates
+The skill is pasted verbatim into an agent's context and reproduced as-is, so a wrong field name propagates
 exactly as reliably as correct code — and usually fails *silently* rather than loudly. Four checks run in CI
 and should be run locally before opening a PR:
 
@@ -107,9 +68,12 @@ npm run check      # validate + typecheck (TypeScript, Go, Python)
 
 **`npm run validate`** enforces structural rules: real API hostnames, correct `dodo_test_`/`dodo_live_` key
 formats, no hand-rolled webhook HMAC, no deprecated SDK calls, no type suppression, and agreement between
-each skill's directory name, its frontmatter, `marketplace.json`, and the README table. It also keeps every
-`SKILL.md` within the Agent Skills 500-line limit and checks `references/`: every reference file must be linked from
-its `SKILL.md`, every link must resolve, and reference files carry no frontmatter.
+the skill's directory name, its frontmatter, `marketplace.json`, and the README table. It follows Anthropic's
+skill authoring guidelines: `SKILL.md` stays at or under 150 lines and its description at or under 1,024
+characters; `references/` is one level deep, every reference file is linked from `SKILL.md`, every link
+resolves, reference files carry no frontmatter, and a reference file over 100 lines starts with a
+`## Contents` list. It also rejects the removed MCP server names and CLI sign-in text that asks for a pasted
+API key.
 
 **`npm run typecheck`** extracts every TypeScript block from every `SKILL.md` and `references/*.md` file and compiles it against the
 real `dodopayments` types — plus the `@dodopayments/*` framework adapters, so adapter examples are checked

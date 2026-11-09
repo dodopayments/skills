@@ -1,8 +1,8 @@
 {
     "name": "@dodopayments/skills",
     "private": true,
-    "version": "2.0.0",
-    "description": "Official Dodo Payments agent skills. Tooling only - the skills themselves are the SKILL.md files.",
+    "version": "3.0.0",
+    "description": "Official Dodo Payments agent skill. Tooling only - the skill itself is dodo-payments/dodo-payments/SKILL.md and its references/.",
     "type": "module",
     "scripts": {
         "validate": "node scripts/validate-skills.mjs .",
@@ -25,7 +25,7 @@
         "@dodopayments/remix": "^0.2.8",
         "@dodopayments/sveltekit": "^0.2.8",
         "@dodopayments/tanstack": "^0.2.8",
-        "dodopayments": "^2.54.0",
+        "dodopayments": "^2.61.1",
         "dodopayments-checkout": "^1.9.5",
         "standardwebhooks": "^1.0.0",
         "typescript": "^5.6.0"
