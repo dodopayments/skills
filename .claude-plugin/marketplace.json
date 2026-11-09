@@ -5,170 +5,17 @@
     "url": "https://dodopayments.com"
   },
   "metadata": {
-    "description": "Official Agent Skills for Dodo Payments — payments, checkout, subscriptions, usage and credit billing, webhooks, and more.",
-    "version": "2.0.0"
+    "description": "Official Agent Skill for Dodo Payments: one dodo-payments skill covering checkout, subscriptions, webhooks, usage and credit billing, license keys, and more.",
+    "version": "3.0.0"
   },
   "plugins": [
     {
-      "name": "dodo-best-practices",
-      "description": "Starting point for any Dodo Payments integration, covering Merchant of Record basics, SDK installation and client setup, test and live environments, API keys, and the canonical checkout-to-webhook flow. Use when starting a new integration, initializing the dodopayments client, choosing an architecture, or unsure which Dodo Payments skill applies.",
+      "name": "dodo-payments",
+      "description": "Integrates Dodo Payments with the dodopayments SDK and the Dodo Payments MCP server. Covers checkout sessions, subscriptions and plan changes, webhook signature verification, usage-based (metered) billing, credits, license keys, products, discounts, localized pricing, customers and the customer portal, refunds and disputes, framework adapters, Better Auth, BillingSDK, mobile checkout, and test mode through go-live. Use whenever a task mentions Dodo Payments, dodopayments, a checkout or pay button, a subscription, a webhook from Dodo, metered or usage billing, credits, license keys, refunds, or a Merchant of Record integration, even if the skill is not named.",
       "source": "./",
       "strict": false,
       "skills": [
-        "./dodo-payments/dodo-best-practices"
-      ]
-    },
-    {
-      "name": "better-auth-integration",
-      "description": "Dodo Payments plugin for Better Auth (@dodopayments/better-auth) covering customer sync on signup, authenticated checkout, customer portal, usage ingestion, and verified webhooks. Use when an app uses Better Auth and needs the dodopayments, dodopaymentsClient, checkout, portal, usage, or webhooks plugins; for other auth stacks use framework-adapters.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/better-auth-integration"
-      ]
-    },
-    {
-      "name": "billing-sdk",
-      "description": "BillingSDK, the open-source React and shadcn component library for Dodo Payments billing UI. Use when building pricing tables, pricing pages, account billing pages, usage meters, credit balances, invoice history, or cancel and upgrade UI in React or Next.js, or running @billingsdk/cli init; keep Dodo API calls server-side.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/billing-sdk"
-      ]
-    },
-    {
-      "name": "checkout-integration",
-      "description": "Dodo Payments checkout via hosted Checkout Sessions (client.checkoutSessions.create), static payment links, and overlay or inline checkout for one-time and subscription products. Use when building a pay button, checkout page, trial signup, custom fields, discount codes at checkout, or return_url redirects; use subscription-integration for post-checkout lifecycle.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/checkout-integration"
-      ]
-    },
-    {
-      "name": "credit-based-billing",
-      "description": "Dodo Payments credit-based billing with credit entitlements, grants, balances, ledger deductions, rollover, expiry, low-balance alerts, and overage. Use when selling prepaid or top-up credit packs, including credits in a plan, deducting AI token or API credits via meters, or granting promo credits; use usage-based-billing for direct per-unit charges.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/credit-based-billing"
-      ]
-    },
-    {
-      "name": "customer-management",
-      "description": "Dodo Payments customer management, covering customer CRUD, saved payment methods, real-money customer wallets and ledger entries, entitlements, and hosted customer portal sessions. Use when linking app users to cus_ IDs, opening a Manage billing portal, listing or deleting payment methods, or crediting wallets; use credit-based-billing for usage credits.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/customer-management"
-      ]
-    },
-    {
-      "name": "discounts-and-promotions",
-      "description": "Dodo Payments discount codes and promotional pricing, covering discount CRUD, percentage and flat amounts, eligibility rules, usage limits, stacking via discount_codes, subscription-cycle limits, and preservation on plan changes. Use when creating coupons or promo codes, applying or validating a code at checkout, or debugging a discount that won't apply.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/discounts-and-promotions"
-      ]
-    },
-    {
-      "name": "framework-adapters",
-      "description": "Official @dodopayments/* framework adapters that mount Checkout, CustomerPortal, and Webhooks route handlers. Use when integrating Dodo Payments into Next.js, Express, Fastify, Hono, Astro, Remix, SvelteKit, Nuxt, TanStack, Bun, or Convex, such as @dodopayments/nextjs; use domain skills for payment and subscription logic.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/framework-adapters"
-      ]
-    },
-    {
-      "name": "license-keys",
-      "description": "Dodo Payments license keys for software products, covering activation, validation, and deactivation via client.licenses, activation limits, expiry, entitlement grants, revocation, and license webhooks. Use when gating a desktop app, CLI, plugin, or SaaS feature behind a license key, enforcing per-seat or per-device limits, or building a license dashboard.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/license-keys"
-      ]
-    },
-    {
-      "name": "localized-pricing",
-      "description": "Dodo Payments multi-currency pricing, covering fixed localized prices per country or currency, Adaptive Currency live FX conversion at checkout, and purchasing power parity (PPP) percentages. Use when pricing in INR, EUR, or other local currencies, offering regional or PPP discounts, or resolving billing country and currency fallback.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/localized-pricing"
-      ]
-    },
-    {
-      "name": "mobile-checkout",
-      "description": "Dodo Payments in-app checkout for React Native, Flutter, native iOS, and Android using SFSafariViewController or Chrome Custom Tabs. Use when a mobile app must open a backend-created checkout session, handle deep link or custom URL scheme returns, recover abandoned checkouts, and verify payment server-side before unlocking access.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/mobile-checkout"
-      ]
-    },
-    {
-      "name": "product-catalog-management",
-      "description": "Dodo Payments product catalog management, covering products with one_time_price, recurring_price, or usage_based_price, add-ons, product collections, product images, and digital file delivery. Use when creating or updating products, plans, or prices, building a storefront, uploading images, attaching downloadable files, or debugging a failed product update.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/product-catalog-management"
-      ]
-    },
-    {
-      "name": "refunds-and-disputes",
-      "description": "Dodo Payments refunds and disputes, covering full and partial refunds, refund statuses, dispute and chargeback lifecycle events, evidence, and revoking or restoring customer access. Use when issuing a refund, handling refund or dispute webhooks, responding to a chargeback, or reconciling entitlements after a payment reversal.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/refunds-and-disputes"
-      ]
-    },
-    {
-      "name": "subscription-integration",
-      "description": "Dodo Payments subscription lifecycle after checkout, covering trials, statuses like active, on_hold, and cancelled, plan upgrades and downgrades, proration, cancellation, failed-payment recovery, mandates, and on-demand charges. Use when managing recurring billing, plan changes, dunning, or off-session charging; use checkout-integration to start the purchase.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/subscription-integration"
-      ]
-    },
-    {
-      "name": "testing-and-go-live",
-      "description": "Dodo Payments test mode and production launch, covering test cards and payment methods, success and decline scenarios, renewal simulation, local webhook testing with the CLI, copying products from test to live, and a go-live checklist. Use when verifying payment flows, switching from test_mode to live_mode, or preparing to launch.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/testing-and-go-live"
-      ]
-    },
-    {
-      "name": "usage-based-billing",
-      "description": "Dodo Payments usage-based billing that charges per measured unit, covering meters, usage event ingestion by event_name, aggregation, free thresholds, price_per_unit, and metered subscriptions. Use when billing per API call, AI token, storage, or bandwidth, sending usage events, or adding metered pricing to a plan; use credit-based-billing for prepaid credit pools.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/usage-based-billing"
-      ]
-    },
-    {
-      "name": "webhook-integration",
-      "description": "Dodo Payments webhook handling, covering endpoint setup, Standard Webhooks signature verification on the raw body, payment, subscription, and refund event types, idempotency with webhook-id, retries, and local testing. Use when receiving Dodo events, verifying webhook-signature headers, or syncing your database from payment.succeeded or subscription events.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/webhook-integration"
-      ]
-    },
-    {
-      "name": "dodo-mcp-usage",
-      "description": "How and when to use the Dodo Payments MCP servers (dodo-knowledge for docs search, dodopayments-api for the live API via Code Mode) safely. Use when looking up current Dodo payloads or event names, or inspecting or changing real products, checkouts, customers, subscriptions, webhooks or refunds.",
-      "source": "./",
-      "strict": false,
-      "skills": [
-        "./dodo-payments/dodo-mcp-usage"
+        "./dodo-payments/dodo-payments"
       ]
     }
   ]

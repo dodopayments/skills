@@ -38,7 +38,18 @@ const BANNED = [
     [/\bas any\b/, 'type suppression'],
     [/dodopayments-webhooks/, 'deprecated third-party package'],
     [/proration_behavior/, 'wrong param name — plan changes use proration_billing_mode'],
+    [/dodo-knowledge|dodopayments-api/, 'removed MCP server name - the one server is `dodopayments` at mcp.dodopayments.com/mcp'],
+    [/paste (?:your|an|the) API key/i, 'the Dodo CLI signs in with OAuth (`dodo login`); it never asks for a pasted API key'],
 ];
+
+// Limits from Anthropic's skill authoring guidelines, tightened for context cost.
+const SKILL_MD_MAX_LINES = 150;
+const DESCRIPTION_MAX_CHARS = 1024;
+// A reference file longer than this must open with a contents list.
+const REFERENCE_TOC_THRESHOLD = 100;
+
+/** Line count, where a trailing newline ends the last line rather than starting another. */
+const lineCount = (text) => text.split('\n').length - (text.endsWith('\n') ? 1 : 0);
 
 // Signing-string check: if a skill shows the algorithm it must include all three parts.
 const SIGNING_HINT = /webhook-id\s*\.\s*webhook-timestamp|webhook-id`?\s*\+|\$\{?webhookId\}?\./;
@@ -171,7 +182,7 @@ for (const dir of dirs) {
         const d = descM[1].trim();
         frontmatterDesc.set(dir, d);
         if (d.length < 40) warn(rel, `description is very short (${d.length} chars) — weakens skill matching`);
-        if (d.length > 400) warn(rel, `description is very long (${d.length} chars)`);
+        if (d.length > DESCRIPTION_MAX_CHARS) err(rel, `description is ${d.length} chars (limit ${DESCRIPTION_MAX_CHARS})`);
     }
 
     // extra frontmatter keys
@@ -184,14 +195,22 @@ for (const dir of dirs) {
     const skillRoot = resolve(skillsDir, dir);
     checkLinksInside(rel, body, skillRoot, skillRoot);
 
-    // --- length: the Agent Skills spec caps SKILL.md at 500 lines ---
-    // A trailing newline ends the last line; it does not start another one.
-    const total = raw.split('\n').length - (raw.endsWith('\n') ? 1 : 0);
-    if (total > 500) err(rel, `SKILL.md is ${total} lines (limit 500) - move detail into references/`);
+    // --- length: SKILL.md is an index, so it stays far below the spec's 500-line cap ---
+    const total = lineCount(raw);
+    if (total > SKILL_MD_MAX_LINES) {
+        err(rel, `SKILL.md is ${total} lines (limit ${SKILL_MD_MAX_LINES}) - move detail into references/`);
+    }
 
     // --- references/: every file must be linked from SKILL.md, every link must resolve ---
     const refDir = join(skillsDir, dir, 'references');
-    const refFiles = existsSync(refDir) ? readdirSync(refDir).filter((f) => f.endsWith('.md')) : [];
+    const refEntries = existsSync(refDir) ? readdirSync(refDir) : [];
+    // One level of references: every reference is a .md file directly under references/.
+    for (const entry of refEntries) {
+        const entryRel = `dodo-payments/${dir}/references/${entry}`;
+        if (statSync(join(refDir, entry)).isDirectory()) err(entryRel, 'nested directory - references/ must stay one level deep');
+        else if (!entry.endsWith('.md')) err(entryRel, 'references/ holds only .md files');
+    }
+    const refFiles = refEntries.filter((f) => f.endsWith('.md') && statSync(join(refDir, f)).isFile());
     // Actual link targets only: inline `](references/x.md)` and reference-style `[id]: references/x.md`.
     const linked = new Set(
         [...body.matchAll(/\]\(\s*<?(?:\.\/)?(references\/[^)#\s>]+)/g), ...body.matchAll(/^\s*\[[^\]]+\]:\s*<?(?:\.\/)?(references\/[^#\s>]+)/gm)]
@@ -205,6 +224,13 @@ for (const dir of dirs) {
         if (!linked.has(`references/${f}`)) err(refRel, 'not linked from SKILL.md - agents will never load it');
         const refBody = readFileSync(join(refDir, f), 'utf8');
         if (refBody.startsWith('---\n')) err(refRel, 'reference files must not carry frontmatter (they would register as skills)');
+        if (lineCount(refBody) > REFERENCE_TOC_THRESHOLD) {
+            // The first second-level heading must be the contents list, so a partial read still sees the map.
+            const firstH2 = refBody.match(/^## .*$/m);
+            if (!firstH2 || firstH2[0].trim() !== '## Contents') {
+                err(refRel, `over ${REFERENCE_TOC_THRESHOLD} lines without a contents list - start the file with a "## Contents" section`);
+            }
+        }
         checkBody(refRel, refBody, 0);
         checkLinksInside(refRel, refBody, refDir, skillRoot);
     }
