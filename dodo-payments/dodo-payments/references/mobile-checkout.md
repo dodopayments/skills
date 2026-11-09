@@ -108,6 +108,7 @@ export async function reconcileAbandonedSession() {
 ```yaml
 dependencies:
   dodopayments_checkout: ^1.0.2
+  app_links: ^7.2.2 # receives the checkout return URL
 ```
 
 ```dart
