@@ -38,11 +38,15 @@ app.post('/api/mobile-checkout', requireAuth, async (req, res) => {
     customer: { customer_id: req.auth.dodoCustomerId }, // from the authenticated session
     return_url: 'myapp://checkout/return',
   });
+  // Remember who started this session, so only they can read its status.
+  await saveCheckoutSessionOwner(session.session_id, req.auth.userId);
   res.json({ checkout_url: session.checkout_url });
 });
 
 // Called by the app to reconcile a session whose result was unknown.
 app.get('/api/mobile-checkout/:sessionId', requireAuth, async (req, res) => {
+  const ownerId = await getCheckoutSessionOwner(req.params.sessionId);
+  if (ownerId !== req.auth.userId) return res.status(404).json({ error: 'Not found' });
   const session = await client.checkoutSessions.retrieve(req.params.sessionId);
   res.json({ payment_status: session.payment_status });
 });

@@ -71,7 +71,9 @@ export async function handleSubscriptionWebhook(event: DodoPayments.UnwrapWebhoo
     case 'subscription.unpaused': {
       const current = await client.subscriptions.retrieve(event.data.subscription_id);
       if (current.status === 'paused') await revokeAccess(current.subscription_id);
-      else if (current.status === 'active' || current.status === 'past_due') await grantAccess(current.subscription_id);
+      else if (current.status === 'active' || current.status === 'past_due') {
+        await grantAccess(current.customer.customer_id, current.product_id);
+      }
       break;
     }
     case 'subscription.cancelled':
